@@ -302,19 +302,19 @@ class DatabaseLoader:
             self.flows_of_IO = self.IO_database.satellite.get_index().tolist()
             self.C_io = pd.concat([pd.read_excel(
                 pkg_resources.resource_stream(__name__, '/Data/characterisationEXIOBASE3_adaptedFromEXIOBASE2.xlsx'),
-                'Q_emission'),
+                'Q_emission', index_col=0),
                 pd.read_excel(
                     pkg_resources.resource_stream(__name__,
                                                   '/Data/characterisationEXIOBASE3_adaptedFromEXIOBASE2.xlsx'),
-                    'Q_materials'),
+                    'Q_materials', index_col=0),
                 pd.read_excel(
                     pkg_resources.resource_stream(__name__,
                                                   '/Data/characterisationEXIOBASE3_adaptedFromEXIOBASE2.xlsx'),
-                    'Q_resources'),
+                    'Q_resources', index_col=0),
                 pd.read_excel(
                     pkg_resources.resource_stream(__name__,
                                                   '/Data/characterisationEXIOBASE3_adaptedFromEXIOBASE2.xlsx'),
-                    'Q_factor_inputs')], sort=False).fillna(0)
+                    'Q_factor_inputs', index_col=0)], sort=False).fillna(0)
             self.C_io = self.C_io.reindex(self.flows_of_IO, axis=1).fillna(0)
             self.impact_methods_IO = self.C_io.index.tolist()
             self.C_io = scipy.sparse.csr_matrix(self.C_io)
@@ -889,7 +889,7 @@ class LCAIO:
         # inflation rate to consider the discrepancy between LCA database and IO database reference years
         inflation = get_inflation(self.reference_year_IO)
 
-        Geo = weighted_concordance_geography.dot(region_covered_per_process)
+        self.Geo = weighted_concordance_geography.dot(region_covered_per_process)
 
         # product concordance matrix filtered
         H_for_hyb = self.H.copy()
@@ -902,7 +902,7 @@ class LCAIO:
                                                columns=pd.MultiIndex.from_product(
                                                    [self.regions_of_IO, self.sectors_of_IO],
                                                    names=['region', 'sector'])).dot(
-            H_for_hyb * inflation * Geo) * self.PRO_f.price
+            H_for_hyb * inflation * self.Geo) * self.PRO_f.price
 
         if capitals:
             self.K_io_f_uncorrected = pd.DataFrame(self.K_io.todense(), index=pd.MultiIndex.from_product(
@@ -910,7 +910,7 @@ class LCAIO:
                                                    names=['region', 'sector']), columns=pd.MultiIndex.from_product(
                                                    [self.regions_of_IO, self.sectors_of_IO],
                                                    names=['region', 'sector'])).dot(
-                H_for_hyb * inflation * Geo) * self.PRO_f.price
+                H_for_hyb * inflation * self.Geo) * self.PRO_f.price
 
             # Since we endogenized capitals we need to remove them from both final demand and factors of production
             self.y_io = pd.DataFrame(self.y_io.todense(),
@@ -936,7 +936,7 @@ class LCAIO:
                                                    names=['region', 'sector']), columns=pd.MultiIndex.from_product(
                                                    [self.regions_of_IO, self.sectors_of_IO],
                                                    names=['region', 'sector'])).dot(
-            self.add_on_H_scaled_vector * inflation * Geo)
+            self.add_on_H_scaled_vector * inflation * self.Geo)
         self.A_io_f_uncorrected = back_to_sparse(self.A_io_f_uncorrected)
 
         if capitals:
@@ -946,7 +946,7 @@ class LCAIO:
                                                    names=['region', 'sector']), columns=pd.MultiIndex.from_product(
                                                    [self.regions_of_IO, self.sectors_of_IO],
                                                    names=['region', 'sector'])).dot(
-                self.add_on_H_scaled_vector * inflation * Geo)
+                self.add_on_H_scaled_vector * inflation * self.Geo)
             self.K_io_f_uncorrected = back_to_sparse(self.K_io_f_uncorrected)
 
         # ------ DOUBLE COUNTING PART -------
