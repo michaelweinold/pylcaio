@@ -780,19 +780,21 @@ class LCAIO:
 
     # ----------------------------CORE METHOD-------------------------------------
 
-    def hybridize(self, method_double_counting, capitals=False):
+    def hybridize(self, use_baci_price_data = False, processes_with_baci_price_data = None):  # , method_double_counting, capitals=False):
         """ Hybridize an LCA database with an IO database
 
-        self.A_io_f_uncorrected is calculated following the equation (1) of the paper [insert doi]
-        self.A_io_f is calculated following the equation (2) of the paper [insert doi]
+            self.A_io_f_uncorrected is calculated following the equation (1) of the paper [insert doi]
 
-        Args:
-        -----
-            method_double_counting  : method to correct double counting with (='binary' or ='STAM')
+        Requires:
+        -------
+            use_baci_price_data            : Boolean whether to use the the Baci price data
+            processes_with_baci_price_data : List of processes for which price data exists. For these processes the
+                                             inputs in the cut-off matrix will not be scaled by the ecoinvent price
+                                             so they can later be scaled by the price data from baci uncertainty sample.
 
         Returns:
         -------
-            The updated self.A_io_f matrix
+            The uncorrected cut off matrix  self.A_io_f_uncorrected
 
         """
 
@@ -805,12 +807,24 @@ class LCAIO:
         if capitals:
             self.description.append('Capitals were endogenized')
             self.capitals = True
+        if use_baci_price_data:
+            if processes_with_baci_price_data == None:
+                raise Exception('Please give a list of processes for which baci price data will be used')
+            self.description.append('Using price data with trading uncertainty from Baci')
+            self.processes_with_baci_price_data = processes_with_baci_price_data
+            self.list_not_to_hyb = [x for x in self.list_not_to_hyb if x not in processes_with_baci_price_data]
+            self.listguillotine = [x for x in self.listguillotine if x not in processes_with_baci_price_data]
+            self.null_price = [x for x in self.null_price if x not in processes_with_baci_price_data]
+            self.list_to_hyb = list(set(self.list_to_hyb).union(set(processes_with_baci_price_data)))
+            self.PRO_f.loc[processes_with_baci_price_data, 'price'] = 1  # set price to 1 as to make it scale neutral
 
         self.identify_rows()
         self.update_prices_electricity()
         self.calc_productions()
         self.low_production_volume_processes()
         self.extend_inventory()
+
+
 
         # ---- CONVERSION PART ------
 
@@ -949,7 +963,20 @@ class LCAIO:
                 self.add_on_H_scaled_vector * inflation * self.Geo)
             self.K_io_f_uncorrected = back_to_sparse(self.K_io_f_uncorrected)
 
-        # ------ DOUBLE COUNTING PART -------
+    # ------ DOUBLE COUNTING PART -------
+    def correct_double_counting(self, method_double_counting, capitals=False):
+        """
+        self.A_io_f is calculated following the equation (2) of the paper [insert doi]
+
+        Args:
+        -----
+            method_double_counting  : method to correct double counting with (='binary' or ='STAM')
+
+        Returns:
+        -------
+            The updated self.A_io_f matrix
+
+        """
 
         if method_double_counting == 'binary':
             lambda_filter_matrix = self.H.dot(pd.DataFrame(self.A_ff_processed.todense(),
