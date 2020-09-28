@@ -221,6 +221,7 @@ class DatabaseLoader:
         del self.LCA_database['PRO']
         self.PRO_f.price = self.PRO_f.price.fillna(0)
         self.LCA_database['A'].values[self.LCA_database['A'].values < 0] *= -1
+        self.LCA_database['A'].fillna(0, inplace=True)
         self.A_ff = scipy.sparse.csr_matrix(self.LCA_database['A'].values)
         del self.LCA_database['A']
         self.A_io = scipy.sparse.csr_matrix(self.IO_database.A)
@@ -780,7 +781,7 @@ class LCAIO:
 
     # ----------------------------CORE METHOD-------------------------------------
 
-    def hybridize(self, use_baci_price_data = False, processes_with_baci_price_data = None):  # , method_double_counting, capitals=False):
+    def hybridize(self, use_baci_price_data = False, processes_with_baci_price_data = None, capitals=False):
         """ Hybridize an LCA database with an IO database
 
             self.A_io_f_uncorrected is calculated following the equation (1) of the paper [insert doi]
@@ -791,6 +792,7 @@ class LCAIO:
             processes_with_baci_price_data : List of processes for which price data exists. For these processes the
                                              inputs in the cut-off matrix will not be scaled by the ecoinvent price
                                              so they can later be scaled by the price data from baci uncertainty sample.
+            capitals                       : Boolean whether to include capital fomation
 
         Returns:
         -------
@@ -798,8 +800,8 @@ class LCAIO:
 
         """
 
-        if not method_double_counting:
-            raise Exception('Please enter a method to correct double counting (i.e. binary or STAM)')
+        # if not method_double_counting:
+        #     raise Exception('Please enter a method to correct double counting (i.e. binary or STAM)')
 
         if not capitals:
             self.capitals = False
