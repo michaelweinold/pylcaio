@@ -818,7 +818,8 @@ class LCAIO:
             self.listguillotine = [x for x in self.listguillotine if x not in processes_with_baci_price_data]
             self.null_price = [x for x in self.null_price if x not in processes_with_baci_price_data]
             self.list_to_hyb = list(set(self.list_to_hyb).union(set(processes_with_baci_price_data)))
-            self.PRO_f.loc[processes_with_baci_price_data, 'price'] = 1  # set price to 1 as to make it scale neutral
+            self.PRO_f.loc['scale_vector_price'] = self.PRO_f['price'].copy()  # copy the price data
+            self.PRO_f.loc['price'] = 1  # set price to 1 as to make it scale neutral
 
         self.identify_rows()
         self.update_prices_electricity()
@@ -947,6 +948,12 @@ class LCAIO:
         self.apply_scaling_without_prices(self.capitals)
         del self.aggregated_A_io
         del self.aggregated_F_io
+        
+        # Save scaling factors
+        self.PRO_f['priceless_scale_vector'] = self.add_on_H_scaled_vector.max(axis=0)
+        self.add_on_H_scaled_vector = np.divide(self.add_on_H_scaled_vector,self.PRO_f['priceless_scale_vector'].values, where=self.PRO_f['priceless_scale_vector'].values != 0)
+        
+        
         self.A_io_f_uncorrected += pd.DataFrame(self.A_io.todense(), index=pd.MultiIndex.from_product(
                                                    [self.regions_of_IO, self.sectors_of_IO],
                                                    names=['region', 'sector']), columns=pd.MultiIndex.from_product(
