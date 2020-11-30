@@ -781,17 +781,17 @@ class LCAIO:
 
     # ----------------------------CORE METHOD-------------------------------------
 
-    def hybridize(self, use_baci_price_data = False, processes_with_baci_price_data = None, capitals=False):
+    def hybridize(self, price_neutral_cut_off_matrix=False, capitals=False):
         """ Hybridize an LCA database with an IO database
 
             self.A_io_f_uncorrected is calculated following the equation (1) of the paper [insert doi]
 
         Requires:
         -------
-            use_baci_price_data            : Boolean whether to use the the Baci price data
-            processes_with_baci_price_data : List of processes for which price data exists. For these processes the
-                                             inputs in the cut-off matrix will not be scaled by the ecoinvent price
-                                             so they can later be scaled by the price data from baci uncertainty sample.
+            price_neutral_cut_off_matrix   : Boolean whether to or not to scale the cut
+                                             off matrix with the price. If True, it
+                                             does not scale with price, which allows for
+                                             the use of external price data later on.
             capitals                       : Boolean whether to include capital fomation
 
         Returns:
@@ -809,23 +809,20 @@ class LCAIO:
         if capitals:
             self.description.append('Capitals were endogenized')
             self.capitals = True
-        if use_baci_price_data:
-            if processes_with_baci_price_data == None:
-                raise Exception('Please give a list of processes for which baci price data will be used')
-            self.description.append('Using price data with trading uncertainty from Baci')
-            self.processes_with_baci_price_data = processes_with_baci_price_data
-            self.list_not_to_hyb = [x for x in self.list_not_to_hyb if x not in processes_with_baci_price_data]
-            self.listguillotine = [x for x in self.listguillotine if x not in processes_with_baci_price_data]
-            self.null_price = [x for x in self.null_price if x not in processes_with_baci_price_data]
-            self.list_to_hyb = list(set(self.list_to_hyb).union(set(processes_with_baci_price_data)))
-            self.PRO_f.loc['scale_vector_price'] = self.PRO_f['price'].copy()  # copy the price data
-            self.PRO_f.loc['price'] = 1  # set price to 1 as to make it scale neutral
-
+        
+        
         self.identify_rows()
         self.update_prices_electricity()
         self.calc_productions()
         self.low_production_volume_processes()
         self.extend_inventory()
+        
+        
+        if price_neutral_cut_off_matrix:
+            self.description.append('Using price neutral scaling to allow for the inclusion of external price data')
+            self.PRO_f['scale_vector_price'] = self.PRO_f['price'].values  # copy the price data
+            self.PRO_f['price'] = 1  # set price to 1 as to make it scale neutral
+
 
 
 
@@ -949,9 +946,12 @@ class LCAIO:
         del self.aggregated_A_io
         del self.aggregated_F_io
         
-        # Save scaling factors
-        self.PRO_f['priceless_scale_vector'] = self.add_on_H_scaled_vector.max(axis=0)
-        self.add_on_H_scaled_vector = np.divide(self.add_on_H_scaled_vector,self.PRO_f['priceless_scale_vector'].values, where=self.PRO_f['priceless_scale_vector'].values != 0)
+        # Save scaling factors but don't apply scale vectors if neutral scaling.
+        if price_neutral_cut_off_matrix:
+            self.PRO_f['priceless_scale_vector'] = self.add_on_H_scaled_vector.max(axis=0)
+            self.add_on_H_scaled_vector = np.divide(self.add_on_H_scaled_vector,
+                    self.PRO_f['priceless_scale_vector'].values,
+                    where=self.PRO_f['priceless_scale_vector'].values != 0)
         
         
         self.A_io_f_uncorrected += pd.DataFrame(self.A_io.todense(), index=pd.MultiIndex.from_product(
