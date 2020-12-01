@@ -906,7 +906,7 @@ class LCAIO:
 
         if price_neutral_cut_off_matrix:
             self.description.append('Using price neutral scaling to allow for the inclusion of external price data')
-            price = np.ones(self.PRO_f)
+            price = np.ones(len(self.PRO_f))
         else:
             price = self.PRO_f.price.copy()
 
