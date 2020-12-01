@@ -817,11 +817,6 @@ class LCAIO:
         self.low_production_volume_processes()
         self.extend_inventory()
         
-        
-        if price_neutral_cut_off_matrix:
-            self.description.append('Using price neutral scaling to allow for the inclusion of external price data')
-            self.PRO_f['scale_vector_price'] = self.PRO_f['price'].values  # copy the price data
-            self.PRO_f['price'] = 1  # set price to 1 as to make it scale neutral
 
 
 
@@ -909,6 +904,12 @@ class LCAIO:
         H_for_hyb = self.H.copy()
         H_for_hyb.loc[:, self.list_not_to_hyb] = 0
 
+        if price_neutral_cut_off_matrix:
+            self.description.append('Using price neutral scaling to allow for the inclusion of external price data')
+            price = np.ones(self.PRO_f)
+        else:
+            price = self.PRO_f.price.copy()
+
         self.A_io_f_uncorrected = pd.DataFrame(self.A_io.todense(),
                                                index=pd.MultiIndex.from_product(
                                                    [self.regions_of_IO, self.sectors_of_IO],
@@ -916,7 +917,7 @@ class LCAIO:
                                                columns=pd.MultiIndex.from_product(
                                                    [self.regions_of_IO, self.sectors_of_IO],
                                                    names=['region', 'sector'])).dot(
-            H_for_hyb * inflation * self.Geo) * self.PRO_f.price
+            H_for_hyb * inflation * self.Geo) * price
 
         if capitals:
             self.K_io_f_uncorrected = pd.DataFrame(self.K_io.todense(), index=pd.MultiIndex.from_product(
@@ -924,7 +925,7 @@ class LCAIO:
                                                    names=['region', 'sector']), columns=pd.MultiIndex.from_product(
                                                    [self.regions_of_IO, self.sectors_of_IO],
                                                    names=['region', 'sector'])).dot(
-                H_for_hyb * inflation * self.Geo) * self.PRO_f.price
+                H_for_hyb * inflation * self.Geo) * price
 
             # Since we endogenized capitals we need to remove them from both final demand and factors of production
             self.y_io = pd.DataFrame(self.y_io.todense(),
