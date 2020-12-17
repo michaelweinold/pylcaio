@@ -1665,7 +1665,7 @@ class LCAIO:
 
     # -------------------------- EXPORT RESULTS -----------------------------------
 
-    def save_system(self, format='pickle'):
+    def save_system(self, file_name=None, format='pickle'):
         """ Export the hybridized database to dataframe via pickle or csv
 
         Args:
@@ -1768,15 +1768,21 @@ class LCAIO:
 
         file = open(pkg_resources.resource_filename(
             __name__, '/Databases/' + self.lca_database_name_and_version + '_' +
-                      self.io_database_name_and_version+'/description_system.txt'), 'w')
+                      self.io_database_name_and_version+'/description_system_{}.txt'.format(self.double_counting)), 'w')
         file.write(str(self.description))
         file.close()
 
         if format == 'pickle':
-            with gzip.open((pkg_resources.resource_filename(
-                    __name__, '/Databases/' + self.lca_database_name_and_version + '_' +
-                              self.io_database_name_and_version + '/hybrid_system.pickle')), 'wb') as f:
-                pickle.dump(hybrid_system, f)
+            if file_name == None:
+                with gzip.open((pkg_resources.resource_filename(
+                        __name__, '/Databases/' + self.lca_database_name_and_version + '_' +
+                                  self.io_database_name_and_version + '/hybrid_system_{}.pickle'.format(self.double_counting))), 'wb') as f:
+                    pickle.dump(hybrid_system, f)
+            else:
+                with gzip.open((pkg_resources.resource_filename(
+                        __name__, '/Databases/' + self.lca_database_name_and_version + '_' +
+                                  self.io_database_name_and_version + '/{}'.format(file_name))), 'wb') as f:
+                    pickle.dump(hybrid_system, f)
 
 
 class Analysis:
@@ -1805,11 +1811,11 @@ class Analysis:
                 self.hybrid_system = pd.read_pickle(f)
         except FileNotFoundError:
             print('The path entered does not lead to the required hybrid_system.pickle file.')
-        try:
-            self.description = eval(open(path_to_hybrid_system.split('/hybrid_system.pickle')[0]+
-                                         '/description_system.txt').read())
-        except FileNotFoundError:
-            print('Please put the description_system.txt file in the same folder as your hybrid_system.pickle file')
+        # try:
+        #     self.description = eval(open(path_to_hybrid_system.split('/hybrid_system.pickle')[0]+
+        #                                  '/description_system.txt').read())
+        # except FileNotFoundError:
+        #     print('Please put the description_system.txt file in the same folder as your hybrid_system.pickle file')
 
         self.PRO_f = self.hybrid_system['PRO_f']
         self.A_ff = self.hybrid_system['A_ff']
