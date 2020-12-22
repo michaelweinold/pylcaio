@@ -897,6 +897,7 @@ class LCAIO:
 
         # inflation rate to consider the discrepancy between LCA database and IO database reference years
         inflation = get_inflation(self.reference_year_IO)
+        self.PRO_f.price *= inflation
 
         self.Geo = weighted_concordance_geography.dot(region_covered_per_process)
 
@@ -917,7 +918,7 @@ class LCAIO:
                                                columns=pd.MultiIndex.from_product(
                                                    [self.regions_of_IO, self.sectors_of_IO],
                                                    names=['region', 'sector'])).dot(
-            H_for_hyb * inflation * self.Geo) * price
+            H_for_hyb * self.Geo) * price
 
         if capitals:
             self.K_io_f_uncorrected = pd.DataFrame(self.K_io.todense(), index=pd.MultiIndex.from_product(
@@ -925,7 +926,7 @@ class LCAIO:
                                                    names=['region', 'sector']), columns=pd.MultiIndex.from_product(
                                                    [self.regions_of_IO, self.sectors_of_IO],
                                                    names=['region', 'sector'])).dot(
-                H_for_hyb * inflation * self.Geo) * price
+                H_for_hyb * self.Geo) * price
 
             # Since we endogenized capitals we need to remove them from both final demand and factors of production
             self.y_io = pd.DataFrame(self.y_io.todense(),
@@ -944,6 +945,7 @@ class LCAIO:
 
         # ---- HYBRIDIZATION WITHOUT PRICES ------
         self.apply_scaling_without_prices(self.capitals)
+        self.add_on_H_scaled_vector *= inflation  # multiply with inflation (was previously in self.A_io_f_uncorrected multiplication)
         del self.aggregated_A_io
         del self.aggregated_F_io
         
@@ -960,7 +962,7 @@ class LCAIO:
                                                    names=['region', 'sector']), columns=pd.MultiIndex.from_product(
                                                    [self.regions_of_IO, self.sectors_of_IO],
                                                    names=['region', 'sector'])).dot(
-            self.add_on_H_scaled_vector * inflation * self.Geo)
+            self.add_on_H_scaled_vector * self.Geo)
         self.A_io_f_uncorrected = back_to_sparse(self.A_io_f_uncorrected)
 
         if capitals:
@@ -970,7 +972,7 @@ class LCAIO:
                                                    names=['region', 'sector']), columns=pd.MultiIndex.from_product(
                                                    [self.regions_of_IO, self.sectors_of_IO],
                                                    names=['region', 'sector'])).dot(
-                self.add_on_H_scaled_vector * inflation * self.Geo)
+                self.add_on_H_scaled_vector * self.Geo)
             self.K_io_f_uncorrected = back_to_sparse(self.K_io_f_uncorrected)
 
     # ------ DOUBLE COUNTING PART -------
@@ -2355,6 +2357,12 @@ def get_inflation(reference_year):
         inflation = 1.10
     elif reference_year == 2011:
         inflation = 1.13
+    elif reference_year == 2012:
+        inflation = 1.16
+    elif reference_year == 2013:
+        inflation = 1.18
+    elif reference_year == 2014:
+        inflation = 1.19
     else:
         inflation = 1
 
