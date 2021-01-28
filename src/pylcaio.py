@@ -1757,7 +1757,7 @@ class LCAIO:
                                  'flows_of_IO': self.flows_of_IO, 'impact_categories_IO': self.impact_methods_IO,
                                  'IMP': self.IMP.to_dict(), 'STR': self.STR_f.to_dict()}
 
-        base_dir = __name__, '/Databases/' + self.lca_database_name_and_version + '_' + self.io_database_name_and_version + '_' + self.reference_year_IO
+        base_dir = __name__, '/Databases/' + self.lca_database_name_and_version + '_' + self.io_database_name_and_version + '_{}'.format(self.reference_year_IO)
         if not os.path.exists(pkg_resources.resource_filename(base_dir)):
             os.makedirs(pkg_resources.resource_filename(base_di))
 
