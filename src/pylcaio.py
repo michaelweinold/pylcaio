@@ -384,6 +384,7 @@ class DatabaseLoader:
                         __name__, '/Data/Characterization_matrix_IW+/normal_extensions/normal_flows_names.txt'), 'r').read())
                 else:
                     self.description.append('Classic impact categories were used')
+                    self.extended_flows_names = self.flows_of_IO   #  needed because this is used later in apply_scaling_without_prices
 
         if regionalized:
             if not impact_world:
@@ -1756,34 +1757,23 @@ class LCAIO:
                                  'flows_of_IO': self.flows_of_IO, 'impact_categories_IO': self.impact_methods_IO,
                                  'IMP': self.IMP.to_dict(), 'STR': self.STR_f.to_dict()}
 
-        if not os.path.exists(pkg_resources.resource_filename(
-                __name__, '/Databases/' + self.lca_database_name_and_version + '_' + self.io_database_name_and_version)):
-            os.makedirs(pkg_resources.resource_filename(
-                __name__, '/Databases/' + self.lca_database_name_and_version + '_' + self.io_database_name_and_version))
+        base_dir = __name__, '/Databases/' + self.lca_database_name_and_version + '_' + self.io_database_name_and_version + '_' self.reference_year_IO
+        if not os.path.exists(pkg_resources.resource_filename(base_dir)):
+            os.makedirs(pkg_resources.resource_filename(base_di))
 
-        if not os.path.exists(pkg_resources.resource_filename(
-                __name__, '/Databases/' + self.lca_database_name_and_version + '_' +
-                          self.io_database_name_and_version + '/__init__.py')):
-            os.makedirs(pkg_resources.resource_filename(
-                __name__, '/Databases/' + self.lca_database_name_and_version + '_' +
-                          self.io_database_name_and_version + '/__init__.py'))
+        if not os.path.exists(pkg_resources.resource_filename(base_dir + '/__init__.py')):
+            os.makedirs(pkg_resources.resource_filename(base_dir +  '/__init__.py'))
 
-        file = open(pkg_resources.resource_filename(
-            __name__, '/Databases/' + self.lca_database_name_and_version + '_' +
-                      self.io_database_name_and_version+'/description_system_{}.txt'.format(self.double_counting)), 'w')
+        file = open(pkg_resources.resource_filename(base_dir + '/description_system_{}.txt'.format(self.double_counting)), 'w')
         file.write(str(self.description))
         file.close()
 
         if format == 'pickle':
             if file_name == None:
-                with gzip.open((pkg_resources.resource_filename(
-                        __name__, '/Databases/' + self.lca_database_name_and_version + '_' +
-                                  self.io_database_name_and_version + '/hybrid_system_{}.pickle'.format(self.double_counting))), 'wb') as f:
+                with gzip.open((pkg_resources.resource_filename(base_dir + '/hybrid_system_{}.pickle'.format(self.double_counting))), 'wb') as f:
                     pickle.dump(hybrid_system, f)
             else:
-                with gzip.open((pkg_resources.resource_filename(
-                        __name__, '/Databases/' + self.lca_database_name_and_version + '_' +
-                                  self.io_database_name_and_version + '/{}'.format(file_name))), 'wb') as f:
+                with gzip.open((pkg_resources.resource_filename(base_dir + '/{}'.format(file_name))), 'wb') as f:
                     pickle.dump(hybrid_system, f)
 
 
