@@ -1872,7 +1872,7 @@ class LCAIO:
                 pickle.dump(hybrid_system, f)
             print("Database saved to {}".format(file_path_and_name))
 
-        description_file_path_and_name = os.path.join(file_path,'description_{}.txt'.format(file_name.rstrip('.pickle)))
+        description_file_path_and_name = os.path.join(file_path,'description_{}.txt'.format(file_name.rstrip('.pickle')))
         with open(description_file_path_and_name, 'w') as fh:
             fh.write(str(self.description))
         print('Description file saved to {}'.format(description_file_path_and_name))
