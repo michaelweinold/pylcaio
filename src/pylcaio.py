@@ -33,6 +33,7 @@ import warnings
 from brightway2 import *
 from bw2agg.scores import add_all_unit_score_exchanges_and_cfs
 import hashlib
+import pdb
 
 pd.set_option('mode.chained_assignment', None)
 
@@ -780,9 +781,80 @@ class LCAIO:
         allowed_keys = list(self.__dict__.keys())
         self.__dict__.update((key, value) for key, value in kwargs.items() if key in allowed_keys)
 
+
+
+    # ----------------------------AGGREGATE EXIOBASE-----------------------------
+    def aggregate(self, agg_dic, build_aggregation_matrix_function):
+        """This function will aggregate EXIOBASE before hybridisation."""
+        print("Getting aggregation matrix...")
+        aggregation_matrix = build_aggregation_matrix_function(
+                                        [agg_dic['region_indices'],
+                                        agg_dic['product_indices']])
+        aggregation_matrix = scipy.sparse.csr_matrix(aggregation_matrix)
+        # aggregate sector names
+        print('Aggregating sector names...')
+
+        self.sectors_of_IO = agg_dic['product_names']
+        self.number_of_products_IO = len(agg_dic['product_names'])
+        
+
+        # aggregate_regions
+        print("Aggregating region and country names...")
+        # RoWs will be treated separately in 'identify_rows()'
+        self.PRO_f.io_geography = [agg_dic['region_dic'][region] if
+                                   region not in
+                                   list(self.countries_per_regions.keys())+
+                                   ['RoW'] else region for region in
+                                   self.PRO_f.io_geography]
+        self.regions_of_IO = agg_dic['region_names']
+
+        self.listcountry = list(set([agg_dic['region_dic'][country] for
+                                        country in self.listcountry]))
+
+        self.countries_per_regions = {key: [agg_dic['region_dic'][i] for i
+                                      in values] for (key,values) in
+                                      self.countries_per_regions.items()}
+        #now remove duplicates
+        self.countries_per_regions = {key: list(set(
+                                        self.countries_per_regions[key])) for
+                                        key in self.countries_per_regions.keys()
+                                        }
+
+        # the number of countries and RoW are only used together in the code
+        self.number_of_countries_IO = len(agg_dic['region_names'])
+        self.number_of_RoW_IO = 0
+
+        # aggregate IO product sectos in STAM dictionary:
+        print("Aggregating IO categories in STAM dictionary...")
+        for key,values in self.io_categories.items():
+            self.io_categories[key] = [agg_dic['product_dic'][item] for
+                                                                item in values]
+
+        # aggregate X
+        print("Aggregating X_io")
+        self.X_io = aggregation_matrix.dot(self.X_io)
+
+        # aggregate A
+        print("Aggregating A_io")
+        self.A_io = aggregation_matrix.dot(
+                                self.A_io.dot(aggregation_matrix.transpose()))
+
+        # aggregate F (environmental extensions)
+        print("Aggregating F_io")
+        self.F_io = self.F_io.dot(aggregation_matrix.transpose())
+        
+        # aggregate IO final demand
+        print("Aggregating y_io")
+        self.y_io = aggregation_matrix.dot(self.y_io)
+        
+        self.description.append(
+                'EXIOBASE was aggregated to {} regions and {} sectors'.format(
+                    self.number_of_countries_IO, self.number_of_products_IO))
+
+
     # ----------------------------CORE METHOD-------------------------------------
 
-    def hybridize(self, price_neutral_cut_off_matrix=False, capitals=False):
+    def hybridize(self, price_neutral_cut_off_matrix=False, capitals=False, priceless_scaling=True):
         """ Hybridize an LCA database with an IO database
 
             self.A_io_f_uncorrected is calculated following the equation (1) of the paper [insert doi]
@@ -800,6 +872,9 @@ class LCAIO:
             The uncorrected cut off matrix  self.A_io_f_uncorrected
 
         """
+        if priceless_scaling:
+            if any('EXIOBASE was aggregated' in sub for sub in self.description):
+                raise Exception("Can not perform priceless sclaing (non functional flow based hybridisation) with an aggregated EXIOBASE")
 
         # if not method_double_counting:
         #     raise Exception('Please enter a method to correct double counting (i.e. binary or STAM)')
@@ -811,11 +886,15 @@ class LCAIO:
             self.description.append('Capitals were endogenized')
             self.capitals = True
         
-        
+        print("Indentifying Rest of World regions...")
         self.identify_rows()
+        print("Updating electricity prices...")
         self.update_prices_electricity()
+        print("Calculating productions volumes...")
         self.calc_productions()
+        print("Adjusting low production volume processes...")
         self.low_production_volume_processes()
+        print("Extending inventory...")
         self.extend_inventory()
         
 
@@ -823,13 +902,14 @@ class LCAIO:
 
 
         # ---- CONVERSION PART ------
-
+        print("Building H matrix...")
         self.H = pd.DataFrame(0, index=self.sectors_of_IO, columns=self.PRO_f.index, dtype='int64')
         for sector in self.H.index:
             self.H.loc[sector, self.H.columns.intersection(self.PRO_f[self.PRO_f.ProductTypeName == sector].index)] = 1
         self.H = self.H.append([self.H] * (self.number_of_countries_IO + self.number_of_RoW_IO - 1))
         self.H.index = pd.MultiIndex.from_product([self.regions_of_IO, self.sectors_of_IO], names=['region', 'sector'])
 
+        print("Building geography concordance...")
         # translate the geography concordance txt files into matrices
         matrix_countries_per_region = pd.DataFrame(0, index=self.listcountry,
                                                    columns=self.listcountry + self.listregions + list(
@@ -866,6 +946,7 @@ class LCAIO:
         concordance_geography = concordance_geography.reindex(self.H.index)
         concordance_geography.index = pd.MultiIndex.from_product(
             [self.regions_of_IO, self.sectors_of_IO], names=['region', 'sector'])
+
         self.H.index = pd.MultiIndex.from_product([self.regions_of_IO, self.sectors_of_IO], names=['region', 'sector'])
 
         # introduce production volumes in the mix
@@ -901,7 +982,8 @@ class LCAIO:
         self.PRO_f.price *= inflation
 
         self.Geo = weighted_concordance_geography.dot(region_covered_per_process)
-
+        
+        print("Filter H matrix...")
         # product concordance matrix filtered
         H_for_hyb = self.H.copy()
         H_for_hyb.loc[:, self.list_not_to_hyb] = 0
@@ -911,7 +993,8 @@ class LCAIO:
             price = np.ones(len(self.PRO_f))
         else:
             price = self.PRO_f.price.copy()
-
+        
+        print("Build Cut-off matrix...")
         self.A_io_f_uncorrected = pd.DataFrame(self.A_io.todense(),
                                                index=pd.MultiIndex.from_product(
                                                    [self.regions_of_IO, self.sectors_of_IO],
@@ -922,6 +1005,7 @@ class LCAIO:
             H_for_hyb * self.Geo) * price
 
         if capitals:
+            print("Build Cut-off matrix for Capital consumption...")
             self.K_io_f_uncorrected = pd.DataFrame(self.K_io.todense(), index=pd.MultiIndex.from_product(
                                                    [self.regions_of_IO, self.sectors_of_IO],
                                                    names=['region', 'sector']), columns=pd.MultiIndex.from_product(
@@ -945,36 +1029,39 @@ class LCAIO:
             self.F_io = back_to_sparse(self.F_io)
 
         # ---- HYBRIDIZATION WITHOUT PRICES ------
-        self.apply_scaling_without_prices(self.capitals)
-        self.add_on_H_scaled_vector *= inflation  # multiply with inflation (was previously in self.A_io_f_uncorrected multiplication)
-        del self.aggregated_A_io
-        del self.aggregated_F_io
-        
-        # Save scaling factors but don't apply scale vectors if neutral scaling.
-        if price_neutral_cut_off_matrix:
-            self.PRO_f['priceless_scale_vector'] = self.add_on_H_scaled_vector.max(axis=0)
-            self.add_on_H_scaled_vector = np.divide(self.add_on_H_scaled_vector,
-                    self.PRO_f['priceless_scale_vector'].values,
-                    where=self.PRO_f['priceless_scale_vector'].values != 0)
-        
-        
-        self.A_io_f_uncorrected += pd.DataFrame(self.A_io.todense(), index=pd.MultiIndex.from_product(
-                                                   [self.regions_of_IO, self.sectors_of_IO],
-                                                   names=['region', 'sector']), columns=pd.MultiIndex.from_product(
-                                                   [self.regions_of_IO, self.sectors_of_IO],
-                                                   names=['region', 'sector'])).dot(
-            self.add_on_H_scaled_vector * self.Geo)
-        self.A_io_f_uncorrected = back_to_sparse(self.A_io_f_uncorrected)
-
-        if capitals:
-            self.K_io_f_uncorrected = self.K_io_f_uncorrected + pd.DataFrame(self.K_io.todense(),
-                                                                             index=pd.MultiIndex.from_product(
-                                                   [self.regions_of_IO, self.sectors_of_IO],
-                                                   names=['region', 'sector']), columns=pd.MultiIndex.from_product(
-                                                   [self.regions_of_IO, self.sectors_of_IO],
-                                                   names=['region', 'sector'])).dot(
+        if priceless_scaling: #Give option to perform non functional flow based (priceless) hybridisation 
+            print("Add processes with 'priceless scaling' to Cut-off matrix...")
+            self.apply_scaling_without_prices(self.capitals)
+            self.add_on_H_scaled_vector *= inflation  # multiply with inflation (was previously in self.A_io_f_uncorrected multiplication)
+            del self.aggregated_A_io
+            del self.aggregated_F_io
+            
+            # Save scaling factors but don't apply scale vectors if neutral scaling.
+            if price_neutral_cut_off_matrix:
+                self.PRO_f['priceless_scale_vector'] = self.add_on_H_scaled_vector.max(axis=0)
+                self.add_on_H_scaled_vector = np.divide(self.add_on_H_scaled_vector,
+                        self.PRO_f['priceless_scale_vector'].values,
+                        where=self.PRO_f['priceless_scale_vector'].values != 0)
+            
+            
+            self.A_io_f_uncorrected += pd.DataFrame(self.A_io.todense(), index=pd.MultiIndex.from_product(
+                                                       [self.regions_of_IO, self.sectors_of_IO],
+                                                       names=['region', 'sector']), columns=pd.MultiIndex.from_product(
+                                                       [self.regions_of_IO, self.sectors_of_IO],
+                                                       names=['region', 'sector'])).dot(
                 self.add_on_H_scaled_vector * self.Geo)
-            self.K_io_f_uncorrected = back_to_sparse(self.K_io_f_uncorrected)
+            self.A_io_f_uncorrected = back_to_sparse(self.A_io_f_uncorrected)
+
+            if capitals:
+                print("Add processes with 'priceless scaling' to capital consumption Cut-off matrix...")
+                self.K_io_f_uncorrected = self.K_io_f_uncorrected + pd.DataFrame(self.K_io.todense(),
+                                                                                 index=pd.MultiIndex.from_product(
+                                                       [self.regions_of_IO, self.sectors_of_IO],
+                                                       names=['region', 'sector']), columns=pd.MultiIndex.from_product(
+                                                       [self.regions_of_IO, self.sectors_of_IO],
+                                                       names=['region', 'sector'])).dot(
+                    self.add_on_H_scaled_vector * self.Geo)
+                self.K_io_f_uncorrected = back_to_sparse(self.K_io_f_uncorrected)
 
     # ------ DOUBLE COUNTING PART -------
     def correct_double_counting(self, method_double_counting, capitals=False):
