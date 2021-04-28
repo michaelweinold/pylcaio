@@ -781,6 +781,7 @@ class LCAIO:
         allowed_keys = list(self.__dict__.keys())
         self.__dict__.update((key, value) for key, value in kwargs.items() if key in allowed_keys)
 
+        self.aggregationFlag = False
 
 
     # ----------------------------AGGREGATE EXIOBASE-----------------------------
@@ -830,19 +831,37 @@ class LCAIO:
             self.io_categories[key] = [agg_dic['product_dic'][item] for
                                                                 item in values]
 
+        
+        print("Calculatig and aggregating Z")
+        Z = back_to_sparse(np.einsum('ij,jk->ij', self.A_io.todense(),
+                                                 self.X_io.todense()))
+        Z_agg = aggregation_matrix.dot(Z.dot(aggregation_matrix.transpose()))
+        del Z
+        print("Calculating and aggregating E")
+        E = back_to_sparse(np.einsum('ij,jk->ij', self.F_io.todense(),
+                                                 self.X_io.todense()))
+        E_agg = E.dot(aggregation_matrix.transpose())
+        del E
+
         # aggregate X
         print("Aggregating X_io")
         self.X_io = aggregation_matrix.dot(self.X_io)
-
+        
         # aggregate A
-        print("Aggregating A_io")
-        self.A_io = aggregation_matrix.dot(
-                                self.A_io.dot(aggregation_matrix.transpose()))
+        print("Calculating A_io")
+        self.A_io = back_to_sparse(np.divide(Z_agg.todense(),
+                                        self.X_io.toarray().flatten(),
+                                        where=self.X_io.toarray().flatten()!=0))
+        del Z_agg
+
 
         # aggregate F (environmental extensions)
-        print("Aggregating F_io")
-        self.F_io = self.F_io.dot(aggregation_matrix.transpose())
-        
+        print("Calculating F_io")
+        self.F_io = back_to_sparse(np.divide(E_agg.todense(),
+                                        self.X_io.toarray().flatten(),
+                                        where=self.X_io.toarray().flatten()!=0))
+        del E_agg
+
         # aggregate IO final demand
         print("Aggregating y_io")
         self.y_io = aggregation_matrix.dot(self.y_io)
@@ -850,7 +869,8 @@ class LCAIO:
         self.description.append(
                 'EXIOBASE was aggregated to {} regions and {} sectors'.format(
                     self.number_of_countries_IO, self.number_of_products_IO))
-
+        
+        self.aggregationFlag = True
 
     # ----------------------------CORE METHOD-------------------------------------
 
@@ -873,7 +893,7 @@ class LCAIO:
 
         """
         if priceless_scaling:
-            if any('EXIOBASE was aggregated' in sub for sub in self.description):
+            if self.aggregationFlag:
                 raise Exception("Can not perform priceless sclaing (non functional flow based hybridisation) with an aggregated EXIOBASE")
 
         # if not method_double_counting:
@@ -1029,7 +1049,9 @@ class LCAIO:
             self.F_io = back_to_sparse(self.F_io)
 
         # ---- HYBRIDIZATION WITHOUT PRICES ------
-        if priceless_scaling: #Give option to perform non functional flow based (priceless) hybridisation 
+        if not priceless_scaling: #Give option to perform non functional flow based (priceless) hybridisation
+            self.hybridized_processes = self.list_to_hyb
+        else:
             self.description.append('Apply priceless scaling')
             print("Add processes with 'priceless scaling' to Cut-off matrix...")
             self.apply_scaling_without_prices(self.capitals)
@@ -1266,7 +1288,7 @@ class LCAIO:
                               item not in list(self.countries_per_regions.values())[i]]
             absent_countries[list(self.countries_per_regions.keys())[i]] = absent_country
 
-        self.total_prod_country = self.total_prod_country = pd.DataFrame(
+        self.total_prod_country =  pd.DataFrame(
             self.X_io.todense(), index=pd.MultiIndex.from_product([self.regions_of_IO, self.sectors_of_IO],
                                                                   names=['region', 'sector']), columns=['production'])
 
@@ -1357,8 +1379,13 @@ class LCAIO:
             pkg_resources.resource_string(__name__, '/Data/Classing_countries.txt').decode('utf-8'))
         for process in self.PRO_f.index:
             if process in df.index:
-                if dict_[self.PRO_f.io_geography[process]] == 'RER':
-                    self.PRO_f.io_geography[process] = dict_[self.PRO_f.io_geography[process]]
+                # dict_ does not work with aggregated countries (it contains custom region descrptions,
+                # therefore if countries were aggregated, leave the aggregated io region in the list
+                if self.aggregationFlag:
+                    pass
+                else:
+                    if dict_[self.PRO_f.io_geography[process]] == 'RER':
+                        self.PRO_f.io_geography[process] = dict_[self.PRO_f.io_geography[process]]
 
     def extend_inventory(self):
         """ Method creating a new technology matrix for the LCA database in which the inputs of processes not to
@@ -1861,7 +1888,7 @@ class LCAIO:
             else:
                 NFFBH_string = ''
             if file_name == None:
-                if any('EXIOBASE was aggregated' in sub for sub in self.description):
+                if self.aggregationFlag:
                     file_name = 'hybrid_system_{}{}_EXIOBASE_aggregated_{}_regions_{}_sectors.pickle'.format(
                             self.double_counting, NFFBH_string,
                             self.number_of_countries_IO, self.number_of_products_IO)
