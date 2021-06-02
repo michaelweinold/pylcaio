@@ -1884,7 +1884,7 @@ class LCAIO:
 
         if format == 'pickle':
             if 'Apply priceless scaling' in self.description:
-                NFFBH_string = '_NFFBH'
+                NFFBH_string = '_NFFBH'  # Non Functional Flow Based Hybrid
             else:
                 NFFBH_string = ''
             if file_name == None:
