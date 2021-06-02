@@ -1757,24 +1757,32 @@ class LCAIO:
                                  'flows_of_IO': self.flows_of_IO, 'impact_categories_IO': self.impact_methods_IO,
                                  'IMP': self.IMP.to_dict(), 'STR': self.STR_f.to_dict()}
 
-        base_dir = '/Databases/' + self.lca_database_name_and_version + '_' + self.io_database_name_and_version + '_{}'.format(self.reference_year_IO)
-        if not os.path.exists(pkg_resources.resource_filename(__name__, base_dir)):
-            os.makedirs(pkg_resources.resource_filename(__name__, base_dir))
+        if not file_path:
+            base_dir = '/Databases/' + self.lca_database_name_and_version + '_' + self.io_database_name_and_version + '_{}'.format(self.reference_year_IO)
+            file_path = pkg_resources.resource_filename(__name__, base_dir)
+        if not os.path.exists(file_path):
+            os.makedirs(file_path)
 
-        if not os.path.exists(pkg_resources.resource_filename(__name__, base_dir + '/__init__.py')):
-            os.makedirs(pkg_resources.resource_filename(__name__, base_dir +  '/__init__.py'))
+        if not os.path.exists(os.path.join(file_path,'__init__.py')):
+            open(os.path.join(file_path,'__init__.py'),'w').close()
 
-        file = open(pkg_resources.resource_filename(__name__, base_dir + '/description_system_{}.txt'.format(self.double_counting)), 'w')
-        file.write(str(self.description))
-        file.close()
 
         if format == 'pickle':
-            if file_name == None:
-                with gzip.open((pkg_resources.resource_filename(__name__, base_dir + '/hybrid_system_{}.pickle'.format(self.double_counting))), 'wb') as f:
-                    pickle.dump(hybrid_system, f)
+            if 'Apply priceless scaling' in self.description:
+                NFFBH_string = '_NFFBH'  # Non Functional Flow Based Hybrid
             else:
-                with gzip.open((pkg_resources.resource_filename(__name__, base_dir + '/{}'.format(file_name))), 'wb') as f:
-                    pickle.dump(hybrid_system, f)
+                NFFBH_string = ''
+            if file_name == None:
+                file_name = 'hybrid_system_{}{}.pickle'.format(self.double_counting, NFFBH_string)
+            file_path_and_name = os.path.join(file_path,'{}'.format(file_name))
+            with gzip.open(file_path_and_name, 'wb') as f:
+                pickle.dump(hybrid_system, f)
+            print("Database saved to {}".format(file_path_and_name))
+
+        description_file_path_and_name = os.path.join(file_path,'description_{}.txt'.format(file_name.rstrip('.pickle')))
+        with open(description_file_path_and_name, 'w') as fh:
+            fh.write(str(self.description))
+        print('Description file saved to {}'.format(description_file_path_and_name))
 
 
 class Analysis:
