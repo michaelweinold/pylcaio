@@ -28,6 +28,7 @@ import os
 import gzip
 import pickle
 import ast
+import re
 import pkg_resources
 import warnings
 from brightway2 import *
@@ -45,11 +46,6 @@ class DatabaseLoader:
 
     Object instance variables:
     -------------------------
-
-            - lca_database_name_and_version : name and version of the LCA database
-            - io_database_name_and_version  : name and version of the IO database
-            - LCA_database  : LCA database in a dictionnary of pandas dataframe
-            - IO_database   : IO database in matrix formats
 
             - PRO_f     : metadata of the LCA database processes
             - A_ff      : technology matrix of the LCA database
@@ -72,9 +68,7 @@ class DatabaseLoader:
             - countries_per_regions   : dict matching unique regions of the LCA database to the corresponding
                                           countries of the IO database
 
-            - replacements1 : dictionary regrouping replacements of geographies needing to occur separately
-            - replacements2 : dictionary regrouping replacements of geographies needing to occur separately
-            - replacements3 : dictionary regrouping replacements of geographies needing to occur separately
+            - replacements : dictionary linking geographies from ecoinvent to exiobase
 
             - reference_year_IO         : the reference year of the IO database
             - number_of_countries_IO    : the number of countries (excluding residual regions) of the IO database
@@ -89,24 +83,19 @@ class DatabaseLoader:
             - null_price        : list regrouping the UUIDs of processes whose product have a null price
             - listguillotine    : list regrouping the UUIDs of processes whose quality is deemed insufficient
 
-            - listcreated       : list regrouping the UUIDs of the processes added to the LCA database
-
     Object methods:
     ---------------
-        * ecoinvent-exiobase_loader()
-        * add_process_to_ecoinvent()
-        * filter_productName_ecoinvent()
+        * combine_ecoinvent_exiobase()
 
     """
 
     def __init__(self, lca_database_processed, io_database_processed,
-                 lca_database_name_and_version='ecoinvent3.5', io_database_name_and_version='exiobase3'):
+                 lca_database_name_and_version, io_database_name_and_version):
         """ Define DatabaseLoader object
         Args:
         -----
             * lca_database_processed        : the LCA database as a dictionary of pandas dataframes
             * io_database_processed         : the IO database as pandas dataframes
-            * path_to_io_database           : the path to the IO database (on your hardware)
             * lca_database_name_and_version : the name and version of the LCA database to be hybridized
             * io_database_name_and_version  : the name and version of the IO database to be hybridized
         """
@@ -151,12 +140,9 @@ class DatabaseLoader:
         self.regionalized_flow_names_eco = []
 
         self.listcountry = []
-        self.listregions = []
         self.countries_per_regions = defaultdict(list)
 
-        self.replacements1 = {}
-        self.replacements2 = {}
-        self.replacements3 = {}
+        self.replacements = {}
 
         self.reference_year_IO = 0
         self.number_of_countries_IO = 0
@@ -172,29 +158,31 @@ class DatabaseLoader:
         self.listguillotine = []
         self.list_uncovered_geographies = []
 
-        self.listcreated = []
-
         self.description = []
 
         self.LCA_database = lca_database_processed
         self.IO_database = io_database_processed
 
+        self.LCA_database['A'] = self.LCA_database['A'].fillna(0)
+        self.LCA_database['F'] = self.LCA_database['F'].fillna(0)
+        self.LCA_database['C'] = self.LCA_database['C'].fillna(0)
+
         del lca_database_processed
         del io_database_processed
 
-        versions_of_ecoinvent = ['ecoinvent3.5', 'ecoinvent3.3']
-        versions_of_exiobase = ['exiobase2', 'exiobase3']
+        versions_of_ecoinvent = ['ecoinvent3.8', 'ecoinvent3.7.1', 'ecoinvent3.6', 'ecoinvent3.5']
         if self.lca_database_name_and_version not in versions_of_ecoinvent:
-            print('The LCA database version you entered is not supported currently')
-        if self.io_database_name_and_version not in versions_of_exiobase:
-            print('The IO database version you entered is not supported currently')
+            raise ValueError('The ecoinvent version you entered is not supported currently. Supported versions are: '
+                             'ecoinvent3.8, ecoinvent3.7.1, ecoinvent3.6 and ecoinvent3.5.')
+        if self.io_database_name_and_version.split('exiobase')[1][0] != '3':
+            raise ValueError('The exiobase version you entered is not supported currently. Pylcaio only supports '
+                             'exiobase3')
 
-    def combine_ecoinvent_exiobase(self, path_to_io_database='', path_to_capitals='', complete_extensions=False,
+    def combine_ecoinvent_exiobase(self, path_to_capitals='', complete_extensions=False,
                                    impact_world=False, regionalized=False):
         """ Loads every needed parameter to hybridize ecoinvent with exiobase as well as both databases
-        Args
-        ---
-            * path_to_io_database   : the path leading to the io database folder (only required if using  exiobase2)
+        Args:
+        ----
             * path_to_capitals      : the path leading to the capitals new matrix (only required if wanting to
                                       endogenize capitals) only available for EXIOBASE3
             * complete_extensions   : boolean (True to complete exiobase3 extensions based on USEEIO extension)
@@ -214,35 +202,45 @@ class DatabaseLoader:
 
         """
 
-        version_ecoinvent = extract_version_from_name(self.lca_database_name_and_version)
-        version_exiobase = extract_version_from_name(self.io_database_name_and_version)
+        # EXTRACTING DATA FROM ECOINVENT AND EXIOBASE
 
+        version_ecoinvent = self.lca_database_name_and_version.split('ecoinvent')[1]
+        version_exiobase = self.io_database_name_and_version.split('exiobase')[1][0]
+
+        # extracting processes metadata from ecoinvent
         self.PRO_f = self.LCA_database['PRO'].copy()
         self.processes_in_order = self.PRO_f.index.tolist()
         del self.LCA_database['PRO']
+        # extracting intermediate exchanges from ecoinvent
         self.PRO_f.price = self.PRO_f.price.fillna(0)
         self.LCA_database['A'].values[self.LCA_database['A'].values < 0] *= -1
         self.LCA_database['A'].fillna(0, inplace=True)
         self.A_ff = scipy.sparse.csr_matrix(self.LCA_database['A'].values)
         del self.LCA_database['A']
+        # extracting intermediate exchanges from exiobase
         self.A_io = scipy.sparse.csr_matrix(self.IO_database.A)
         self.sectors_of_IO = self.IO_database.get_sectors().tolist()
         self.regions_of_IO = self.IO_database.get_regions().tolist()
         self.Y_categories = self.IO_database.get_Y_categories().tolist()
-        # self.A_io_f = pd.DataFrame(0, index=self.A_io.index, columns=self.A_ff.columns, dtype='float32')
+        # extracting environmental exchanges from ecoinvent
         self.F_f = scipy.sparse.csr_matrix(self.LCA_database['F'].values)
         del self.LCA_database['F']
+        # extracting final demand from exiobase
         self.y_io = scipy.sparse.csr_matrix(self.IO_database.Y)
+        # extracting characterization factors from ecoinvent
         self.C_f = scipy.sparse.csr_matrix(self.LCA_database['C'].values)
         del self.LCA_database['C']
+        # extracting methods and elementary flows metadata from ecoinvent
         self.IMP = self.LCA_database['IMP']
         self.STR_f = self.LCA_database['STR'].copy().drop('cas', axis=1)
         self.STR_f.columns = ['MATRIXID', 'FULLNAME', 'UNIT', 'comp', 'subcomp']
 
+        # useful intel for later
         self.number_of_products_IO = len([i for i in self.IO_database.get_sectors()])
         self.number_of_RoW_IO = 5
         self.number_of_countries_IO = len([i for i in self.IO_database.get_regions()]) - self.number_of_RoW_IO
 
+<<<<<<< HEAD
         if version_exiobase == str(2):
             if path_to_io_database == '':
                 raise Exception('Please provide the path to the exiobase2 folder as an argument of '
@@ -366,8 +364,82 @@ class DatabaseLoader:
                     self.extended_impact_names_IW_eco = eval(open(pkg_resources.resource_filename(
                         __name__, '/Data/Characterization_matrix_IW+/completed_extensions/not_regionalized_IW+_ecoinvent.txt'), 'r').read())
                     self.description.append('Impact World+ was used')
+=======
+        # cleaning up exiobase sector names
+        self.sectors_of_IO = [i.split(' (')[0] if re.findall(r'\d', i) else i for i in self.sectors_of_IO]
+        # extracting calculated matrices from exiobase (X, L, etc.)
+        self.IO_database.calc_all()
+        self.X_io = scipy.sparse.csr_matrix(self.IO_database.x.values)
+        # exiobase is in million euros, so we divide by 1,000,000
+        self.IO_database.satellite.S[9:] /= 1000000
+        self.F_io = scipy.sparse.csr_matrix(self.IO_database.satellite.S)
+        del self.IO_database.satellite.S
+        del self.IO_database.satellite.F
+        del self.IO_database.Z
+        self.flows_of_IO = self.IO_database.satellite.get_index().tolist()
+        # compiling a characterization matrix for exiobase
+        self.C_io = pd.concat([pd.read_excel(
+            pkg_resources.resource_stream(__name__, '/Data/characterisationEXIOBASE3_adaptedFromEXIOBASE2.xlsx'),
+            'Q_emission'),
+            pd.read_excel(
+                pkg_resources.resource_stream(__name__,
+                                              '/Data/characterisationEXIOBASE3_adaptedFromEXIOBASE2.xlsx'),
+                'Q_materials'),
+            pd.read_excel(
+                pkg_resources.resource_stream(__name__,
+                                              '/Data/characterisationEXIOBASE3_adaptedFromEXIOBASE2.xlsx'),
+                'Q_resources'),
+            pd.read_excel(
+                pkg_resources.resource_stream(__name__,
+                                              '/Data/characterisationEXIOBASE3_adaptedFromEXIOBASE2.xlsx'),
+                'Q_factor_inputs')], sort=False).fillna(0)
+        self.impact_methods_IO = list(zip(self.C_io.iloc[:, 0], self.C_io.iloc[:, 1], self.C_io.iloc[:, 2],
+                                          self.C_io.iloc[:, 3]))
+        # reordering + if there is any flows that weren't characterized put a null CF
+        self.C_io = self.C_io.reindex(self.flows_of_IO, axis=1).fillna(0)
+        self.C_io = scipy.sparse.csr_matrix(self.C_io)
 
+        # reference year allows to determine the inflation rate that will need to be applied
+        self.reference_year_IO = int(self.IO_database.meta.description[-4:])
+
+        self.description.append('Exiobase 3 / reference year: '+str(self.reference_year_IO))
+
+        # OPTIONAL FEATURES - MORE ENVIRONMENTAL EXTENSIONS
+
+        if complete_extensions:
+            new_extensions = scipy.sparse.load_npz(pkg_resources.resource_filename(__name__,
+                                                                                 '/Data/Completed_extensions_exio3/'
+                                                                                 'S_completed.npz'))
+            new_flows_names = eval(open(pkg_resources.resource_filename(
+                __name__, '/Data/Completed_extensions_exio3/extension_names.txt'), 'r').read())
+
+            extended_extensions = completing_extensions(pd.DataFrame(self.F_io.todense(),
+                                                                        index=self.flows_of_IO,
+                                                                        columns=pd.MultiIndex.from_product([
+                                                                              self.regions_of_IO,
+                                                                              self.sectors_of_IO],
+                                                                              names=['region', 'sector'])),
+                                                        pd.DataFrame(new_extensions.todense(),
+                                                                        index=new_flows_names,
+                                                                        columns=pd.MultiIndex.from_product([
+                                                                            self.regions_of_IO,
+                                                                            self.sectors_of_IO],
+                                                                            names=['region', 'sector'])))
+            self.extended_flows_names = extended_extensions.index.tolist()
+            self.F_io = back_to_sparse(extended_extensions)
+
+            self.description.append('Environmental extensions were completed')
+>>>>>>> 9534adf583d71f29c8d11e3c0ba20c5b8791dcf2
+
+            if not impact_world:
+                self.C_io = scipy.sparse.load_npz(pkg_resources.resource_filename(__name__, '/Data/'
+                                                                                 'Completed_extensions_exio3/'
+                                                                                 'C_completed_in_CML.npz'))
+                self.extended_impact_names_CML = eval(open(pkg_resources.resource_filename(
+                    __name__, '/Data/Completed_extensions_exio3/name_impact_extended_CML.txt'), 'r').read())
+                self.description.append('Classic impact categories were used')
             else:
+<<<<<<< HEAD
                 self.description.append('Environmental extensions were not completed')
                 if impact_world:
                     self.C_io = scipy.sparse.load_npz(pkg_resources.resource_filename(
@@ -386,11 +458,43 @@ class DatabaseLoader:
                 else:
                     self.description.append('Classic impact categories were used')
                     self.extended_flows_names = self.flows_of_IO   #  needed because this is used later in apply_scaling_without_prices
+=======
+                self.C_io = scipy.sparse.load_npz(pkg_resources.resource_filename(
+                    __name__, '/Data/Characterization_matrix_IW+/completed_extensions/Exiobase_not_regionalized.npz'))
+                self.extended_impact_names_IW_exio = eval(open(pkg_resources.resource_filename(
+                    __name__, '/Data/Characterization_matrix_IW+/completed_extensions/not_regionalized_IW+_EXIOBASE.txt'), 'r').read())
+                self.C_f = scipy.sparse.load_npz(pkg_resources.resource_filename(
+                    __name__, '/Data/Characterization_matrix_IW+/completed_extensions/Ecoinvent_not_regionalized.npz'))
+                self.extended_impact_names_IW_eco = eval(open(pkg_resources.resource_filename(
+                    __name__, '/Data/Characterization_matrix_IW+/completed_extensions/not_regionalized_IW+_ecoinvent.txt'), 'r').read())
+                self.description.append('Impact World+ was used')
+
+        else:
+            self.description.append('Environmental extensions were not completed')
+            if impact_world:
+                self.C_io = scipy.sparse.load_npz(pkg_resources.resource_filename(
+                    __name__, '/Data/Characterization_matrix_IW+/normal_extensions/Exiobase_not_regionalized.npz'))
+                self.extended_impact_names_IW_exio = eval(open(pkg_resources.resource_filename(
+                    __name__, '/Data/Characterization_matrix_IW+/normal_extensions/not_regionalized_IW+_EXIOBASE.txt'), 'r').read())
+                self.C_f = scipy.sparse.load_npz(pkg_resources.resource_filename(
+                    __name__, '/Data/Characterization_matrix_IW+/normal_extensions/Ecoinvent_not_regionalized.npz'))
+                self.extended_impact_names_IW_eco = eval(open(pkg_resources.resource_filename(
+                    __name__, '/Data/Characterization_matrix_IW+/normal_extensions/not_regionalized_IW+_ecoinvent.txt'), 'r').read())
+                self.description.append('Impact World+ was used')
+                self.F_io = scipy.sparse.load_npz(pkg_resources.resource_filename(
+                    __name__, '/Data/Characterization_matrix_IW+/normal_extensions/Exiobase_not_regionalized_F.npz'))
+                self.extended_flows_names = eval(open(pkg_resources.resource_filename(
+                    __name__, '/Data/Characterization_matrix_IW+/normal_extensions/normal_flows_names.txt'), 'r').read())
+            else:
+                self.description.append('Classic impact categories were used')
+
+        # OPTIONAL FEATURES - REGIONALIZATION OF IMPACTS
+>>>>>>> 9534adf583d71f29c8d11e3c0ba20c5b8791dcf2
 
         if regionalized:
             if not impact_world:
-                print('Only the imapct world+ method supports regionalization. '
-                      'Please pass the corresponding argument as True')
+                print('Only the impact world+ method supports regionalization. '
+                      'Please pass the corresponding argument as True if you wish to regionalize')
             else:
                 self.description.append('Regionalized flows/impacts available')
                 if complete_extensions:
@@ -491,13 +595,11 @@ class DatabaseLoader:
                 self.C_io = back_to_sparse(self.C_io)
         else:
             self.description.append('Regionalized flows/impacts unavailable')
-        # CAPITAL GOODS
+
+        # OPTIONAL FEATURES - CAPITAL GOODS
+
         if path_to_capitals == '':
             print('No path for the capital folder was provided. Capitals will not be endogenized')
-            Kbar = None
-            inv_diag_x = None
-        elif version_exiobase == str(2):
-            print('The endogeneization of capitals is only available with exiobase3')
             Kbar = None
             inv_diag_x = None
         else:
@@ -517,57 +619,29 @@ class DatabaseLoader:
                                                                             '/Data/eco' + str(
                                                                                 version_ecoinvent) + '_exio' + str(
                                                                                 version_exiobase) +
-                                                                            '/STAM_categories.txt').decode(
-            'utf-8'))
+                                                                            '/STAM_categories.txt').decode('utf-8'))
         self.categories_same_functionality = ast.literal_eval(
             pkg_resources.resource_string(
                 __name__,
                 '/Data/eco' + str(version_ecoinvent) + '_exio' + str(
-                    version_exiobase) + '/STAM_functional_categories.txt').decode(
-                'utf-8'))
+                    version_exiobase) + '/STAM_functional_categories.txt').decode('utf-8'))
 
         # GEOGRAPHY CONCORDANCE
 
         self.listcountry = ast.literal_eval(
-            pkg_resources.resource_string(
-                __name__,
-                '/Data/eco' + str(version_ecoinvent) + '_exio' + str(version_exiobase) + '/countries.txt').decode(
-                'utf-8'))
-        self.listregions = ast.literal_eval(
-            pkg_resources.resource_string(
-                __name__,
-                '/Data/eco' + str(version_ecoinvent) + '_exio' + str(version_exiobase) + '/regions.txt').decode(
-                'utf-8'))
+            pkg_resources.resource_string(__name__,
+                '/Data/eco' + str(version_ecoinvent) + '_exio' + str(version_exiobase) + '/countries.txt').decode('utf-8'))
+
         self.countries_per_regions = ast.literal_eval(
             pkg_resources.resource_string(
-                __name__,
-                '/Data/eco' + str(version_ecoinvent) + '_exio' + str(version_exiobase) +
+                __name__, '/Data/eco' + str(version_ecoinvent) + '_exio' + str(version_exiobase) +
                 '/countries_per_regions.txt').decode('utf-8'))
-        self.replacements1 = ast.literal_eval(pkg_resources.resource_string(
-            __name__,
-            '/Data/eco' + str(version_ecoinvent) + '_exio' + str(version_exiobase) +
-            '/geography_replacements_regions.txt').decode('utf-8'))
-        self.replacements2 = ast.literal_eval(pkg_resources.resource_string(
-            __name__,
-            '/Data/eco' + str(version_ecoinvent) + '_exio' + str(version_exiobase) +
-            '/geography_replacements_other.txt').decode('utf-8'))
-        self.replacements3 = ast.literal_eval(pkg_resources.resource_string(
-            __name__,
-            '/Data/eco' + str(version_ecoinvent) + '_exio' + str(version_exiobase) +
-            '/geography_replacements_RoW.txt').decode('utf-8'))
 
-        self.PRO_f['io_geography'] = self.PRO_f.geography.copy()
-        self.PRO_f.io_geography = self.PRO_f.io_geography.replace(self.replacements1, regex=True)
-        self.PRO_f.io_geography = self.PRO_f.io_geography.replace(self.replacements2, regex=True)
-        self.PRO_f.io_geography = self.PRO_f.io_geography.replace(self.replacements3, regex=True)
-        # cannot replace these normally because they alter the existing regions of ecoinvent3.5
-        if version_ecoinvent == str(3.5):
-            self.PRO_f.io_geography[[
-                i for i in self.PRO_f.index if self.PRO_f.io_geography[i] in ['ER', 'NA', 'TN']]] = 'WF'
-            self.PRO_f.io_geography[
-                [i for i in self.PRO_f.index if self.PRO_f.io_geography[i] in ['NI', 'AR']]] = 'WL'
-            if version_exiobase == 2:
-                self.PRO_f.io_geography[self.PRO_f.io_geography == 'HR'] = 'WE'
+        self.replacements = ast.literal_eval(
+            pkg_resources.resource_string(
+                __name__, '/Data/eco' + str(version_ecoinvent) + '_exio' + str(version_exiobase) +
+                '/geography_replacements.txt').decode('utf-8'))
+        self.PRO_f['io_geography'] = [self.replacements[i] if i in self.replacements else i for i in self.PRO_f.geography]
 
         # PRODUCT CONCORDANCE
 
@@ -632,7 +706,7 @@ class DatabaseLoader:
 
         return LCAIO(PRO_f=self.PRO_f, A_ff=self.A_ff, A_io=self.A_io, F_f=self.F_f, F_io=self.F_io, X_io=self.X_io,
                      y_io=self.y_io, C_f=self.C_f, C_io=self.C_io, STR_f=self.STR_f, IMP=self.IMP,
-                     listcountry=self.listcountry, listregions=self.listregions, K_io=self.K_io,
+                     listcountry=self.listcountry, K_io=self.K_io,
                      countries_per_regions=self.countries_per_regions, reference_year_IO=self.reference_year_IO,
                      number_of_countries_IO=self.number_of_countries_IO, number_of_RoW_IO=self.number_of_RoW_IO,
                      number_of_products_IO=self.number_of_products_IO, list_to_hyb=self.list_to_hyb,
@@ -687,7 +761,14 @@ class LCAIO:
         * hybridize()
         * identify_rows()
         * calc_productions()
+        * correct_inconsistencies()
+        * low_production_volume_processes()
         * extend_inventory()
+        * extract_scaling_vector_technosphere()
+        * extract_scaling_vector_biosphere
+        * extract_flow_amounts_technosphere()
+        * extract_flow_amounts_biosphere()
+        * apply_scaling_without_prices()
         * save_system()
 
     """
@@ -737,7 +818,6 @@ class LCAIO:
         self.regionalized_flow_names_eco = []
 
         self.listcountry = []
-        self.listregions = []
         self.countries_per_regions = defaultdict(list)
 
         self.replacements1 = {}
@@ -932,8 +1012,9 @@ class LCAIO:
         print("Building geography concordance...")
         # translate the geography concordance txt files into matrices
         matrix_countries_per_region = pd.DataFrame(0, index=self.listcountry,
-                                                   columns=self.listcountry + self.listregions + list(
-                                                       self.dictRoW.keys()))
+                                                   columns=self.listcountry +
+                                                           list(self.countries_per_regions) +
+                                                           list(self.dictRoW.keys()))
         for country in self.listcountry:
             matrix_countries_per_region.loc[country, country] = 1
         for region in self.countries_per_regions.keys():
@@ -942,8 +1023,9 @@ class LCAIO:
             matrix_countries_per_region.loc[self.dictRoW[RoW], RoW] = 1
 
         # identify which region corresponds to which process
-        region_covered_per_process = pd.DataFrame(0,
-                                                  index=self.listcountry + self.listregions + list(self.dictRoW.keys()),
+        region_covered_per_process = pd.DataFrame(0, index=self.listcountry +
+                                                          list(self.countries_per_regions) +
+                                                          list(self.dictRoW.keys()),
                                                   columns=self.PRO_f.index)
         for country in region_covered_per_process.index:
             df = pd.DataFrame(self.PRO_f.io_geography)[
@@ -1039,11 +1121,11 @@ class LCAIO:
                                      pd.MultiIndex.from_product([self.regions_of_IO, self.Y_categories]))
             self.y_io.loc[:, [i for i in self.y_io.columns if i[1] == 'Gross fixed capital formation']] = 0
             self.y_io = back_to_sparse(self.y_io)
-            if len(self.F_io.todense()) == 1104:
-                self.F_io = pd.DataFrame(self.F_io.todense(), self.flows_of_IO,
+            if self.extended_flows_names:
+                self.F_io = pd.DataFrame(self.F_io.todense(), self.extended_flows_names,
                                          pd.MultiIndex.from_product([self.regions_of_IO, self.sectors_of_IO]))
             else:
-                self.F_io = pd.DataFrame(self.F_io.todense(), self.extended_flows_names,
+                self.F_io = pd.DataFrame(self.F_io.todense(), self.flows_of_IO,
                                          pd.MultiIndex.from_product([self.regions_of_IO, self.sectors_of_IO]))
             self.F_io.loc['Operating surplus: Consumption of fixed capital', :] = 0
             self.F_io = back_to_sparse(self.F_io)
@@ -1495,16 +1577,16 @@ class LCAIO:
 
         if str(what_is_treated) + ' waste for treatment: ' + str(treatment) in biogenic_sectors:
             dff = self.extract_flow_amounts_biosphere(list_add_on_to_hyb, True)
-            if len(self.F_io.todense()) == 1104:
-                list_CO2_extensions = [i for i in self.flows_of_IO if 'CO2' in i and 'biogenic' in i]
-            else:
+            if self.extended_flows_names:
                 list_CO2_extensions = [i for i in self.extended_flows_names if 'CO2' in i and 'biogenic' in i]
+            else:
+                list_CO2_extensions = [i for i in self.flows_of_IO if 'CO2' in i and 'biogenic' in i]
         else:
             dff = self.extract_flow_amounts_biosphere(list_add_on_to_hyb, False)
-            if len(self.F_io.todense()) == 1104:
-                list_CO2_extensions = [i for i in self.flows_of_IO if 'CO2' in i and 'biogenic' not in i]
-            else:
+            if self.extended_flows_names:
                 list_CO2_extensions = [i for i in self.extended_flows_names if 'CO2' in i and 'biogenic' not in i]
+            else:
+                list_CO2_extensions = [i for i in self.flows_of_IO if 'CO2' in i and 'biogenic' not in i]
 
         scaling_vector = self.PRO_f.price.copy()
         scaling_vector.loc[:] = 0
@@ -1596,11 +1678,11 @@ class LCAIO:
                 self.A_io.todense(), self.H.index, self.H.index).groupby('sector', axis=1).sum()
         self.aggregated_A_io = self.aggregated_A_io.groupby('sector', axis=0).sum()
         # identify if environmental flows got extended or not in database_loader()
-        if len(self.F_io.todense()) == 1104:
-            self.aggregated_F_io = pd.DataFrame(self.F_io.todense(), self.flows_of_IO, self.H.index).groupby(
+        if self.extended_flows_names:
+            self.aggregated_F_io = pd.DataFrame(self.F_io.todense(), self.extended_flows_names, self.H.index).groupby(
                 level=1, axis=1).sum()
         else:
-            self.aggregated_F_io = pd.DataFrame(self.F_io.todense(), self.extended_flows_names, self.H.index).groupby(
+            self.aggregated_F_io = pd.DataFrame(self.F_io.todense(), self.flows_of_IO, self.H.index).groupby(
                 level=1, axis=1).sum()
 
         self.A_ff = pd.DataFrame(self.A_ff.todense(), self.PRO_f.index, self.PRO_f.index)
@@ -1958,6 +2040,11 @@ class Analysis:
             pass
         if 'Impact World+ was used' not in self.description:
             self.IMP = self.hybrid_system['IMP']
+            self.C = pd.concat([pd.DataFrame(self.C_f.todense(), index=self.IMP['method'], columns=self.STR['MATRIXID']),
+                       pd.DataFrame(self.C_io.todense(), index=self.impact_categories_IO,
+                                    columns=self.flows_of_IO)]).fillna(0)
+            self.C_index = self.C.index.tolist()
+            self.C = back_to_sparse(self.C)
         else:
             self.impact_categories_eco = self.hybrid_system['impact_categories_eco']
             if 'Regionalized flows/impacts available' not in self.description:
@@ -2177,10 +2264,10 @@ class Analysis:
         Exporting the hybrid database into brightway2 in a disaggregated format.
 
         :args:  bw2_project_name: (string) the name of the brightway2 project in which the hybrid database will be
-                                           imported. Note that the method creates and deletes an 'ecoinvent3.5 cut-off'
+                                           imported. Note that the method creates and deletes an 'hybrid-ecoinvent'
                                            database. If you use an already-existing project and have a database named
-                                           'ecoinvent3.5 cut-off', it will be overwritten and deleted.
-               path_to_ecoinvent_ecospold_datasets: (string) path to the ecospold files of ecoinvent3.5
+                                           'hybrid-ecoinvent', it will be overwritten and deleted.
+               path_to_ecoinvent_ecospold_datasets: (string) path to the ecospold files of the ecoinvent version used
                aggregated: (boolean) if True Contribution analyses will show the contribution aggregated IO complements
                                              comparatively to ecoinvent inputs. Takes 1h30 to 2h to import.
                                      if False Contribution analyses will show the contribution of each IO complement
@@ -2205,8 +2292,8 @@ class Analysis:
                                                                        'laurepatou-IMPACT-World-in-Brightway-d949b33/'
                                                                        'Brightway_IW_damage_1_46_and_midpoint_1_28.bw2package'))
 
-        # importing ecoinvent3.5 cut-off into the project
-        eco_importer = SingleOutputEcospold2Importer(path_to_ecoinvent_ecospold_datasets, 'ecoinvent3.5 cut-off')
+        # importing hybrid-ecoinvent into the project
+        eco_importer = SingleOutputEcospold2Importer(path_to_ecoinvent_ecospold_datasets, 'hybrid-ecoinvent')
         eco_importer.apply_strategies()
         eco_importer.write_database()
 
@@ -2275,7 +2362,7 @@ class Analysis:
 
     def import_hybrid_ecoinvent_into_brightway2(self, created_database_name, aggregated):
         print('Starting import of hybrid data')
-        db = Database('ecoinvent3.5 cut-off')
+        db = Database('hybrid-ecoinvent')
         ecoinvent_metadata = pd.DataFrame.from_dict(self.PRO_f)
 
         # need to match uuids used in pylcaio to hash codes used by brightway2
@@ -2325,13 +2412,13 @@ class Analysis:
             for process in bw2_eco_dict.keys():
                 bw2_eco_dict[process]['exchanges'].extend(bw2_dict[(created_database_name, process[1])]['exchanges'])
 
-            # exchanges will be associated to the hybrid_ecoinvent_agg database of bw2 and not ecoinvent3.5 cut-off
+            # exchanges will be associated to the hybrid_ecoinvent_agg database of bw2 and not hybrid-ecoinvent
             bw2_hybrid_dict = {(created_database_name, k[1]): v for k, v in bw2_eco_dict.items()}
             bw2_hybrid_dict = {
                 outer_k: {
                     inner_k: [
                         {k: (created_database_name, v[1]) if ((k == 'input' or k == 'output')
-                                                           and v[0] == 'ecoinvent3.5 cut-off')
+                                                           and v[0] == 'hybrid-ecoinvent')
                          else v
                          for k, v in i.items()}
                         for i in bw2_hybrid_dict[outer_k][inner_k]
@@ -2341,8 +2428,8 @@ class Analysis:
                 }
                 for outer_k, outer_v in bw2_hybrid_dict.items()
             }
-            print('Deleting ecoinvent3.5 cut-off database')
-            del databases['ecoinvent3.5 cut-off']
+            print('Deleting hybrid-ecoinvent database')
+            del databases['hybrid-ecoinvent']
             print('Writing {} database'.format(created_database_name))
             Database(created_database_name).write(bw2_hybrid_dict)
             print('{} successfully imported'.format(created_database_name))
@@ -2380,13 +2467,13 @@ class Analysis:
                      bw2_dict[(created_database_name, hash_code)]['exchanges'].items()}.values())
             print('Matching ecoinvent data with hybrid data')
             # to link ecoinvent exchanges to exiobase exchanges, we need the original ecoinvent to also be in a dict format
-            bw2_eco_dict = Database('ecoinvent3.5 cut-off').load()
+            bw2_eco_dict = Database('hybrid-ecoinvent').load()
 
             # add IO complements to each ecoinvent process
             for process in bw2_eco_dict.keys():
                 bw2_eco_dict[process]['exchanges'].extend(bw2_dict[(created_database_name, process[1])]['exchanges'])
 
-            # exchanges will be associated to the hybrid_ecoinvent database of bw2 and not ecoinvent3.5 cut-off
+            # exchanges will be associated to the hybrid_ecoinvent database of bw2 and not hybrid-ecoinvent
             bw2_hybrid_dict = {(created_database_name, k[1]): v for k, v in bw2_eco_dict.items()}
 
             # we also need to replace the database name in the inputs. It's a bit trickier:
@@ -2394,7 +2481,7 @@ class Analysis:
                 outer_k: {
                     inner_k: [
                         {k: (created_database_name, v[1]) if ((k == 'input' or k == 'output')
-                                                           and v[0] == 'ecoinvent3.5 cut-off')
+                                                           and v[0] == 'hybrid-ecoinvent')
                          else v
                          for k, v in i.items()}
                         for i in bw2_hybrid_dict[outer_k][inner_k]
@@ -2404,9 +2491,9 @@ class Analysis:
                 }
                 for outer_k, outer_v in bw2_hybrid_dict.items()
             }
-            print('Deleting ecoinvent3.5 cut-off database')
-            # we remove the 'ecoinvent3.5 cut-off' database. Its taking unnecessary space.
-            del databases['ecoinvent3.5 cut-off']
+            print('Deleting hybrid-ecoinvent database')
+            # we remove the 'hybrid-ecoinvent' database. Its taking unnecessary space.
+            del databases['hybrid-ecoinvent']
             print('Writing {} database'.format(created_database_name))
             # write the formatted dictionary in the brightway2 database
             Database(created_database_name).write(bw2_hybrid_dict)
@@ -2427,18 +2514,9 @@ class Analysis:
         return impact_hybrid
 
 
-def extract_version_from_name(name_database):
-    for i in range(0, len(name_database)):
-        try:
-            if type(int(name_database[i])) == int:
-                return name_database[i:]
-        except ValueError:
-            pass
-
-
 def get_inflation(reference_year):
     """ Returns the inflation rate between the year 2005 (base year for ecoinvent prices) and the reference year of
-    the used IO database"""
+    the used IO database, from https://www.inflationtool.com/euro/2005-to-present-value"""
 
     if reference_year == 1995:
         inflation = 0.83
@@ -2480,6 +2558,26 @@ def get_inflation(reference_year):
         inflation = 1.18
     elif reference_year == 2014:
         inflation = 1.19
+<<<<<<< HEAD
+=======
+    elif reference_year == 2015:
+        inflation = 1.19
+    elif reference_year == 2016:
+        inflation = 1.19
+    elif reference_year == 2017:
+        inflation = 1.21
+    elif reference_year == 2018:
+        inflation = 1.22
+    elif reference_year == 2019:
+        inflation = 1.24
+    elif reference_year == 2020:
+        inflation = 1.26
+    elif reference_year == 2021:
+        inflation = 1.25
+    # no data available for 2022, same data as 2021 by default
+    elif reference_year == 2022:
+        inflation = 1.25
+>>>>>>> 9534adf583d71f29c8d11e3c0ba20c5b8791dcf2
     else:
         inflation = 1
 
@@ -2497,7 +2595,7 @@ def sum_elements_list(liste):
 
 
 def LCA_convention_to_IO(dataframe):
-    """ Changes the convetion of an LCA technology matrix from LCA to IO """
+    """ Changes the convention of a technology matrix from LCA to IO """
     # no ones on the diagonal
     dataframe[dataframe == 1] = 0
     # only positive values
