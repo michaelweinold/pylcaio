@@ -214,7 +214,7 @@ class DatabaseLoader:
         # extracting intermediate exchanges from ecoinvent
         self.PRO_f.price = self.PRO_f.price.fillna(0)
         self.LCA_database['A'].values[self.LCA_database['A'].values < 0] *= -1
-        self.LCA_database['A'].fillna(0, inplace=True)
+        # self.LCA_database['A'].fillna(0, inplace=True)
         self.A_ff = scipy.sparse.csr_matrix(self.LCA_database['A'].values)
         del self.LCA_database['A']
         # extracting intermediate exchanges from exiobase
@@ -240,131 +240,6 @@ class DatabaseLoader:
         self.number_of_RoW_IO = 5
         self.number_of_countries_IO = len([i for i in self.IO_database.get_regions()]) - self.number_of_RoW_IO
 
-<<<<<<< HEAD
-        if version_exiobase == str(2):
-            if path_to_io_database == '':
-                raise Exception('Please provide the path to the exiobase2 folder as an argument of '
-                                'combine_ecoinvent_exiobase()')
-            self.reference_year_IO = 2007
-            self.IO_database.emissions.S.index = self.IO_database.emissions.S.index.tolist()
-            self.IO_database.emissions.S.columns = self.IO_database.emissions.S.columns.tolist()
-            self.F_io = pd.concat(
-                [self.IO_database.emissions.S, self.IO_database.resources.S, self.IO_database.materials.S])
-            self.F_io = self.F_io / 1000000
-            for_update = self.IO_database.factor_inputs.S.loc[self.IO_database.factor_inputs.unit[
-                self.IO_database.factor_inputs.unit != 'M.EUR'].dropna().index] / 1000000
-            self.IO_database.factor_inputs.S.update(for_update)
-            self.F_io = pd.concat([self.F_io, self.IO_database.factor_inputs.S])
-            self.F_io = self.F_io.select_dtypes(include=['float']).apply(pd.to_numeric, downcast='float')
-            c_emissions = pd.read_excel(path_to_io_database + 'characterisation_CREEA_version2.2.2.xlsx',
-                                        'Q_emission')
-            c_emissions.columns = self.IO_database.emissions.S.index
-            c_emissions = c_emissions.drop(c_emissions.index[0])
-            c_factorinputs = pd.read_excel(path_to_io_database + 'characterisation_CREEA_version2.2.2.xlsx',
-                                           'Q_factorinputs')
-            c_factorinputs.columns = self.IO_database.factor_inputs.S.index
-            c_factorinputs = c_factorinputs.drop(c_factorinputs.index[0])
-            c_materials = pd.read_excel(path_to_io_database + 'characterisation_CREEA_version2.2.2.xlsx',
-                                        'Q_materials')
-            c_materials.columns = self.IO_database.materials.S.index
-            c_materials = c_materials.drop(c_materials.index[0])
-            c_resources = pd.read_excel(path_to_io_database + 'characterisation_CREEA_version2.2.2.xlsx',
-                                        'Q_resources')
-            c_resources.columns = self.IO_database.resources.S.index
-            c_resources = c_resources.drop(c_resources.index[0])
-            c_emissions.index = c_emissions.index.values
-            c_emissions.columns = c_emissions.columns.values
-            c_resources.columns = c_resources.columns.values
-            self.C_io = pd.concat([c_emissions, c_resources, c_materials, c_factorinputs], sort=False)
-            self.C_io = self.C_io.fillna(0)
-            self.C_io = self.C_io.astype(dtype='float32')
-            self.STR_io = pd.DataFrame([self.IO_database.emissions.S.index.tolist(),
-                                        [i[0] for i in self.IO_database.emissions.S.index],
-                                        [i[1] for i in self.IO_database.emissions.S.index]],
-                                       index=['MATRIXID', 'FULLNAME', 'comp']).transpose()
-            self.STR_io.index = self.STR_io.MATRIXID
-            self.STR_io = self.STR_io.drop('MATRIXID', axis=1)
-
-            self.description.append('Exiobase2')
-
-        if version_exiobase == str(3):
-            # removing digits in the product group names of exiobase 3
-            for i in range(0, len(self.sectors_of_IO)):
-                if any(char.isdigit() for char in self.sectors_of_IO[i]):
-                    self.sectors_of_IO[i] = self.sectors_of_IO[i][:-5]
-            self.IO_database.calc_all()
-            self.X_io = scipy.sparse.csr_matrix(self.IO_database.x.values)
-            self.IO_database.satellite.S.values[9:] /= 1000000
-            self.F_io = scipy.sparse.csr_matrix(self.IO_database.satellite.S)
-            del self.IO_database.satellite.S
-            del self.IO_database.satellite.F
-            del self.IO_database.Z
-            self.flows_of_IO = self.IO_database.satellite.get_index().tolist()
-            self.C_io = pd.concat([pd.read_excel(
-                pkg_resources.resource_stream(__name__, '/Data/characterisationEXIOBASE3_adaptedFromEXIOBASE2.xlsx'),
-                'Q_emission', index_col=0),
-                pd.read_excel(
-                    pkg_resources.resource_stream(__name__,
-                                                  '/Data/characterisationEXIOBASE3_adaptedFromEXIOBASE2.xlsx'),
-                    'Q_materials', index_col=0),
-                pd.read_excel(
-                    pkg_resources.resource_stream(__name__,
-                                                  '/Data/characterisationEXIOBASE3_adaptedFromEXIOBASE2.xlsx'),
-                    'Q_resources', index_col=0),
-                pd.read_excel(
-                    pkg_resources.resource_stream(__name__,
-                                                  '/Data/characterisationEXIOBASE3_adaptedFromEXIOBASE2.xlsx'),
-                    'Q_factor_inputs', index_col=0)], sort=False).fillna(0)
-            self.C_io = self.C_io.reindex(self.flows_of_IO, axis=1).fillna(0)
-            self.impact_methods_IO = self.C_io.index.tolist()
-            self.C_io = scipy.sparse.csr_matrix(self.C_io)
-
-            self.reference_year_IO = int(self.IO_database.meta.description[-4:])
-
-            self.description.append('Exiobase 3 / reference year: '+str(self.reference_year_IO))
-
-            if complete_extensions:
-                new_extensions = scipy.sparse.load_npz(pkg_resources.resource_filename(__name__,
-                                                                                     '/Data/Completed_extensions_exio3/'
-                                                                                     'S_completed.npz'))
-                new_flows_names = eval(open(pkg_resources.resource_filename(
-                    __name__, '/Data/Completed_extensions_exio3/extension_names.txt'), 'r').read())
-
-                extended_extensions = completing_extensions(pd.DataFrame(self.F_io.todense(),
-                                                                            index=self.flows_of_IO,
-                                                                            columns=pd.MultiIndex.from_product([
-                                                                                  self.regions_of_IO,
-                                                                                  self.sectors_of_IO],
-                                                                                  names=['region', 'sector'])),
-                                                            pd.DataFrame(new_extensions.todense(),
-                                                                            index=new_flows_names,
-                                                                            columns=pd.MultiIndex.from_product([
-                                                                                self.regions_of_IO,
-                                                                                self.sectors_of_IO],
-                                                                                names=['region', 'sector'])))
-                self.extended_flows_names = extended_extensions.index.tolist()
-                self.F_io = back_to_sparse(extended_extensions)
-
-                self.description.append('Environmental extensions were completed')
-
-                if not impact_world:
-                    self.C_io = scipy.sparse.load_npz(pkg_resources.resource_filename(__name__, '/Data/'
-                                                                                     'Completed_extensions_exio3/'
-                                                                                     'C_completed_in_CML.npz'))
-                    self.extended_impact_names_CML = eval(open(pkg_resources.resource_filename(
-                        __name__, '/Data/Completed_extensions_exio3/name_impact_extended_CML.txt'), 'r').read())
-                    self.description.append('Classic impact categories were used')
-                else:
-                    self.C_io = scipy.sparse.load_npz(pkg_resources.resource_filename(
-                        __name__, '/Data/Characterization_matrix_IW+/completed_extensions/Exiobase_not_regionalized.npz'))
-                    self.extended_impact_names_IW_exio = eval(open(pkg_resources.resource_filename(
-                        __name__, '/Data/Characterization_matrix_IW+/completed_extensions/not_regionalized_IW+_EXIOBASE.txt'), 'r').read())
-                    self.C_f = scipy.sparse.load_npz(pkg_resources.resource_filename(
-                        __name__, '/Data/Characterization_matrix_IW+/completed_extensions/Ecoinvent_not_regionalized.npz'))
-                    self.extended_impact_names_IW_eco = eval(open(pkg_resources.resource_filename(
-                        __name__, '/Data/Characterization_matrix_IW+/completed_extensions/not_regionalized_IW+_ecoinvent.txt'), 'r').read())
-                    self.description.append('Impact World+ was used')
-=======
         # cleaning up exiobase sector names
         self.sectors_of_IO = [i.split(' (')[0] if re.findall(r'\d', i) else i for i in self.sectors_of_IO]
         # extracting calculated matrices from exiobase (X, L, etc.)
@@ -429,7 +304,6 @@ class DatabaseLoader:
             self.F_io = back_to_sparse(extended_extensions)
 
             self.description.append('Environmental extensions were completed')
->>>>>>> 9534adf583d71f29c8d11e3c0ba20c5b8791dcf2
 
             if not impact_world:
                 self.C_io = scipy.sparse.load_npz(pkg_resources.resource_filename(__name__, '/Data/'
@@ -439,26 +313,6 @@ class DatabaseLoader:
                     __name__, '/Data/Completed_extensions_exio3/name_impact_extended_CML.txt'), 'r').read())
                 self.description.append('Classic impact categories were used')
             else:
-<<<<<<< HEAD
-                self.description.append('Environmental extensions were not completed')
-                if impact_world:
-                    self.C_io = scipy.sparse.load_npz(pkg_resources.resource_filename(
-                        __name__, '/Data/Characterization_matrix_IW+/normal_extensions/Exiobase_not_regionalized.npz'))
-                    self.extended_impact_names_IW_exio = eval(open(pkg_resources.resource_filename(
-                        __name__, '/Data/Characterization_matrix_IW+/normal_extensions/not_regionalized_IW+_EXIOBASE.txt'), 'r').read())
-                    self.C_f = scipy.sparse.load_npz(pkg_resources.resource_filename(
-                        __name__, '/Data/Characterization_matrix_IW+/normal_extensions/Ecoinvent_not_regionalized.npz'))
-                    self.extended_impact_names_IW_eco = eval(open(pkg_resources.resource_filename(
-                        __name__, '/Data/Characterization_matrix_IW+/normal_extensions/not_regionalized_IW+_ecoinvent.txt'), 'r').read())
-                    self.description.append('Impact World+ was used')
-                    self.F_io = scipy.sparse.load_npz(pkg_resources.resource_filename(
-                        __name__, '/Data/Characterization_matrix_IW+/normal_extensions/Exiobase_not_regionalized_F.npz'))
-                    self.extended_flows_names = eval(open(pkg_resources.resource_filename(
-                        __name__, '/Data/Characterization_matrix_IW+/normal_extensions/normal_flows_names.txt'), 'r').read())
-                else:
-                    self.description.append('Classic impact categories were used')
-                    self.extended_flows_names = self.flows_of_IO   #  needed because this is used later in apply_scaling_without_prices
-=======
                 self.C_io = scipy.sparse.load_npz(pkg_resources.resource_filename(
                     __name__, '/Data/Characterization_matrix_IW+/completed_extensions/Exiobase_not_regionalized.npz'))
                 self.extended_impact_names_IW_exio = eval(open(pkg_resources.resource_filename(
@@ -489,7 +343,6 @@ class DatabaseLoader:
                 self.description.append('Classic impact categories were used')
 
         # OPTIONAL FEATURES - REGIONALIZATION OF IMPACTS
->>>>>>> 9534adf583d71f29c8d11e3c0ba20c5b8791dcf2
 
         if regionalized:
             if not impact_world:
@@ -2558,8 +2411,6 @@ def get_inflation(reference_year):
         inflation = 1.18
     elif reference_year == 2014:
         inflation = 1.19
-<<<<<<< HEAD
-=======
     elif reference_year == 2015:
         inflation = 1.19
     elif reference_year == 2016:
@@ -2577,7 +2428,6 @@ def get_inflation(reference_year):
     # no data available for 2022, same data as 2021 by default
     elif reference_year == 2022:
         inflation = 1.25
->>>>>>> 9534adf583d71f29c8d11e3c0ba20c5b8791dcf2
     else:
         inflation = 1
 
