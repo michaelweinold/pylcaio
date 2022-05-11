@@ -1828,7 +1828,10 @@ class LCAIO:
                             self.double_counting, NFFBH_string,
                             self.number_of_countries_IO, self.number_of_products_IO)
                 else:
-                    file_name = 'hybrid_system_{}{}.pickle'.format(self.double_counting, NFFBH_string)
+                    file_name = 'hybrid_system_{}{}'+self.lca_database_name_and_version +\
+                            '_' + self.io_database_name_and_version + '_{}.pickle'.format(self.double_counting,
+                                                                                          NFFBH_string,
+                                                                                          self.reference_year_IO)
             file_path_and_name = os.path.join(file_path,'{}'.format(file_name))
             with gzip.open(file_path_and_name, 'wb') as f:
                 pickle.dump(hybrid_system, f)
