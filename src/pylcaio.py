@@ -1054,6 +1054,7 @@ class LCAIO:
 
             self.double_counting = 'binary'
             self.description.append('The binary method was used to correct for double counting')
+            self.correct_binary = lambda_filter_matrix
 
         elif method_double_counting == 'STAM':
             lambda_filter_matrix = self.H.dot(pd.DataFrame(self.A_ff_processed.todense(),
@@ -1097,6 +1098,8 @@ class LCAIO:
 
             self.double_counting = 'STAM'
             self.description.append('STAM was used to correct for double counting')
+            self.correct_STAM = phi_filter_matrix.multiply(
+                    gamma_filter_matrix.multiply(lambda_filter_matrix))
 
     # ---------------------PREPARATIONS FOR THE HYBRIDIZATION----------------------
 
