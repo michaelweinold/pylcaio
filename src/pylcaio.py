@@ -1060,9 +1060,9 @@ class LCAIO:
             #                               if i[1] in self.list_of_capital_sectors]] = 1
             lambda_filter_matrix = back_to_sparse(lambda_filter_matrix)
 
-            self.A_io_f = self.A_io_f_uncorrected.multiply(lambda_filter_matrix)
+            self.A_io_f = back_to_sparse(self.A_io_f_uncorrected).multiply(lambda_filter_matrix)
             if capitals:
-                self.K_io_f = self.K_io_f_uncorrected.multiply(lambda_filter_matrix)
+                self.K_io_f = back_to_sparse(self.K_io_f_uncorrected).multiply(lambda_filter_matrix)
 
             self.double_counting = 'binary'
             self.description.append('The binary method was used to correct for double counting')
