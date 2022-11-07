@@ -1034,13 +1034,20 @@ class LCAIO:
                 self.K_io_f_uncorrected = back_to_sparse(self.K_io_f_uncorrected)
 
     # ------ DOUBLE COUNTING PART -------
-    def correct_double_counting(self, method_double_counting, capitals=False):
+    def correct_double_counting(self, method_double_counting, capitals=False, save_all_correction_strategies=True):
         """
         self.A_io_f is calculated following the equation (2) of the paper [insert doi]
 
         Args:
         -----
             method_double_counting  : method to correct double counting with (='binary' or ='STAM')
+
+            capitals                : Indicate if capital matrices are included
+
+            save_all_correction_strategies
+                                    : If True will save both double counting corretion matrices, i.e. also the one not applied.
+                                      For example: if you choose 'binary' as method_double_counting, and save_all_correction_strategies==True,
+                                      it will save both self.correct_binary and self.correct_STAM
 
         Returns:
         -------
@@ -1068,7 +1075,7 @@ class LCAIO:
             self.description.append('The binary method was used to correct for double counting')
             self.correct_binary = lambda_filter_matrix
 
-        elif method_double_counting == 'STAM':
+        elif method_double_counting == 'STAM' or save_all_correction_strategies==True:
             lambda_filter_matrix = self.H.dot(pd.DataFrame(self.A_ff_processed.todense(),
                                               self.PRO_f.index, self.PRO_f.index))
             lambda_filter_matrix = lambda_filter_matrix.mask(lambda_filter_matrix > 0)
@@ -1101,17 +1108,25 @@ class LCAIO:
             del categories_used_by_processes
             phi_filter_matrix = back_to_sparse(phi_filter_matrix)
 
-            self.A_io_f = phi_filter_matrix.multiply(
-                gamma_filter_matrix.multiply(lambda_filter_matrix.multiply(self.A_io_f_uncorrected)))
+            if method_double_counting=='STAM':
+                self.A_io_f = phi_filter_matrix.multiply(
+                    gamma_filter_matrix.multiply(lambda_filter_matrix.multiply(self.A_io_f_uncorrected)))
 
-            if capitals:
-                self.K_io_f = phi_filter_matrix.multiply(
-                    gamma_filter_matrix.multiply(lambda_filter_matrix.multiply(self.K_io_f_uncorrected)))
+                if capitals:
+                    self.K_io_f = phi_filter_matrix.multiply(
+                        gamma_filter_matrix.multiply(lambda_filter_matrix.multiply(self.K_io_f_uncorrected)))
 
-            self.double_counting = 'STAM'
-            self.description.append('STAM was used to correct for double counting')
+                self.double_counting = 'STAM'
+                self.description.append('STAM was used to correct for double counting')
+                #if method_double_counting ==STAM we can also save correct_binary here
+                if save_all_correction_strategies==True:
+                    self.correct_binary = lambda_filter_matrix
+            #if we're here in any case save the STAM double counting corretion matrix
             self.correct_STAM = phi_filter_matrix.multiply(
                     gamma_filter_matrix.multiply(lambda_filter_matrix))
+
+        # save flag if both matrices have been saved or not
+        self.save_both_strategies = save_all_correction_strategies
 
     # ---------------------PREPARATIONS FOR THE HYBRIDIZATION----------------------
 
