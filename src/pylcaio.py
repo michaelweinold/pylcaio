@@ -31,8 +31,11 @@ import ast
 import re
 import pkg_resources
 import warnings
-from brightway2 import *
-from bw2agg.scores import add_all_unit_score_exchanges_and_cfs
+from bw2io import bw2setup
+from bw2io import SingleOutputEcospold2Importer
+from bw2io import BW2Package
+import bw2data
+#from bw2agg.scores import add_all_unit_score_exchanges_and_cfs
 import hashlib
 import pdb
 
@@ -226,7 +229,7 @@ class DatabaseLoader:
         self.F_f = scipy.sparse.csr_matrix(self.LCA_database['F'].values)
         del self.LCA_database['F']
         # extracting final demand from exiobase
-        self.y_io = scipy.sparse.csr_matrix(self.IO_database.Y)
+        self.y_io = scipy.sparse.csr_matrix(self.IO_database.Y) 
         # extracting characterization factors from ecoinvent
         self.C_f = scipy.sparse.csr_matrix(self.LCA_database['C'].values)
         del self.LCA_database['C']
@@ -236,7 +239,7 @@ class DatabaseLoader:
         self.STR_f.columns = ['MATRIXID', 'FULLNAME', 'UNIT', 'comp', 'subcomp']
 
         # useful intel for later
-        self.number_of_products_IO = len([i for i in self.IO_database.get_sectors()])
+        self.number_of_products_IO = len([i for i in self.IO_database.get_sectors()]) 
         self.number_of_RoW_IO = 5
         self.number_of_countries_IO = len([i for i in self.IO_database.get_regions()]) - self.number_of_RoW_IO
 
@@ -2173,7 +2176,7 @@ class Analysis:
             return
 
         # creating a new bw2 project
-        projects.set_current(bw2_project_name)
+        bw2data.projects.set_current(bw2_project_name)
 
         # importing elementary flows and default LCIA methods
         bw2setup()
