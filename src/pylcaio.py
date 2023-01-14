@@ -31,9 +31,7 @@ import ast
 import re
 import pkg_resources
 import warnings
-from bw2io import bw2setup
-from bw2io import SingleOutputEcospold2Importer
-from bw2io import BW2Package
+import bw2io
 import bw2data
 #from bw2agg.scores import add_all_unit_score_exchanges_and_cfs
 import hashlib
@@ -822,7 +820,7 @@ class LCAIO:
 
     # ----------------------------CORE METHOD-------------------------------------
 
-    def hybridize(self, price_neutral_cut_off_matrix=False, capitals=False, priceless_scaling=True):
+    def hybridize(self, method_double_counting, price_neutral_cut_off_matrix=False, capitals=False, priceless_scaling=True):
         """ Hybridize an LCA database with an IO database
 
             self.A_io_f_uncorrected is calculated following the equation (1) of the paper [insert doi]
@@ -1036,8 +1034,63 @@ class LCAIO:
                     self.add_on_H_scaled_vector * self.Geo)
                 self.K_io_f_uncorrected = back_to_sparse(self.K_io_f_uncorrected)
 
+        ### DOUBLE COUNTING SNIPPETS
+        save_all_correction_strategies = False
+        if method_double_counting == 'STAM':
+            lambda_filter_matrix = self.H.dot(pd.DataFrame(self.A_ff_processed.todense(),
+                                                self.PRO_f.index, self.PRO_f.index))
+            lambda_filter_matrix = lambda_filter_matrix.mask(lambda_filter_matrix > 0)
+            lambda_filter_matrix[lambda_filter_matrix == 0] = 1
+            lambda_filter_matrix = lambda_filter_matrix.fillna(0)
+            lambda_filter_matrix = back_to_sparse(lambda_filter_matrix)
+
+            self.G = pd.DataFrame(0, index=self.sectors_of_IO, columns=self.STAM_table.columns)
+            for columns in self.G.columns:
+                self.G.loc[[i for i in self.G.index if i in self.io_categories[columns]], columns] = 1
+            self.G = self.G.append([self.G] * (self.number_of_countries_IO + self.number_of_RoW_IO - 1))
+            self.G.index = pd.MultiIndex.from_product([self.regions_of_IO, self.sectors_of_IO],
+                                                        names=['region', 'sector'])
+
+            gamma_filter_matrix = self.G.dot((self.STAM_table.mul(self.patching_exiobase)).dot(self.G.transpose().
+                                                                                                dot(self.H)))
+            gamma_filter_matrix[gamma_filter_matrix == self.number_of_countries_IO + self.number_of_RoW_IO] = 1
+            gamma_filter_matrix = back_to_sparse(gamma_filter_matrix)
+
+            phi_filter_matrix = pd.DataFrame(1, index=self.G.index, columns=self.PRO_f.index)
+            categories_used_by_processes = self.G.transpose().dot(self.H.dot(
+                pd.DataFrame(self.A_ff_processed.todense(), self.PRO_f.index, self.PRO_f.index)))
+            del self.G
+
+            for category in self.categories_same_functionality:
+                list_category_to_zero = [i for i in categories_used_by_processes.columns if
+                                            categories_used_by_processes.loc[category, i] != 0]
+                phi_filter_matrix.loc[[i for i in phi_filter_matrix.index if
+                                        i[1] in self.io_categories[category]], list_category_to_zero] = 0
+            del categories_used_by_processes
+            phi_filter_matrix = back_to_sparse(phi_filter_matrix)
+
+            if method_double_counting=='STAM':
+                self.A_io_f = phi_filter_matrix.multiply(
+                    gamma_filter_matrix.multiply(lambda_filter_matrix.multiply(self.A_io_f_uncorrected)))
+
+                if capitals:
+                    self.K_io_f = phi_filter_matrix.multiply(
+                        gamma_filter_matrix.multiply(lambda_filter_matrix.multiply(self.K_io_f_uncorrected)))
+
+                self.double_counting = 'STAM'
+                self.description.append('STAM was used to correct for double counting')
+                #if method_double_counting ==STAM we can also save correct_binary here
+                if save_all_correction_strategies==True:
+                    self.correct_binary = lambda_filter_matrix
+            #if we're here in any case save the STAM double counting corretion matrix
+            self.correct_STAM = phi_filter_matrix.multiply(
+                    gamma_filter_matrix.multiply(lambda_filter_matrix))
+
+        # save flag if both matrices have been saved or not
+        self.save_both_strategies = save_all_correction_strategies
+
     # ------ DOUBLE COUNTING PART -------
-    def correct_double_counting(self, method_double_counting, capitals=False, save_all_correction_strategies=True):
+    def correct_double_counting(method_double_counting, capitals=False, save_all_correction_strategies=True):
         """
         self.A_io_f is calculated following the equation (2) of the paper [insert doi]
 
@@ -2179,15 +2232,15 @@ class Analysis:
         bw2data.projects.set_current(bw2_project_name)
 
         # importing elementary flows and default LCIA methods
-        bw2setup()
+        bw2io.bw2setup()
 
         # loading the IMPACT World+ LCIA method into the project
-        BW2Package.import_file(pkg_resources.resource_stream(__name__, '/Data/for_export_in_brightway2/'
+        bw2io.BW2Package.import_file(pkg_resources.resource_stream(__name__, '/Data/for_export_in_brightway2/'
                                                                        'laurepatou-IMPACT-World-in-Brightway-d949b33/'
                                                                        'Brightway_IW_damage_1_46_and_midpoint_1_28.bw2package'))
 
         # importing hybrid-ecoinvent into the project
-        eco_importer = SingleOutputEcospold2Importer(path_to_ecoinvent_ecospold_datasets, 'hybrid-ecoinvent')
+        eco_importer = bw2io.SingleOutputEcospold2Importer(path_to_ecoinvent_ecospold_datasets, 'hybrid-ecoinvent')
         eco_importer.apply_strategies()
         eco_importer.write_database()
 
@@ -2218,11 +2271,11 @@ class Analysis:
         for IW_category in IW_pylcaio_to_bw2:
             if 'PDF' in IW_category or 'DALY' in IW_category:
                 IW_pylcaio_to_bw2[IW_category] = \
-                methods.get(('IMPACTWorld+ (Default_Recommended_Damage 1.46)', IW_category.split(' (')[0]))[
+                bw2data.methods.get(('IMPACTWorld+ (Default_Recommended_Damage 1.46)', IW_category[0].split(' (')[0]))[
                     'abbreviation']
             else:
                 IW_pylcaio_to_bw2[IW_category] = \
-                methods.get(('IMPACTWorld+ (Default_Recommended_Midpoint 1.28)', IW_category.split(' (')[0]))[
+                bw2data.methods.get(('IMPACTWorld+ (Default_Recommended_Midpoint 1.28)', IW_category[0].split(' (')[0]))[
                     'abbreviation']
         aggregated_results.index = list(IW_pylcaio_to_bw2.values())
 
@@ -2251,12 +2304,12 @@ class Analysis:
                  bw2_dict[('exiobase', sector_hash)]['exchanges'].items()}.values())
         print('Writing exiobase database')
         # importing the aggregated exiobase into the project
-        Database('exiobase').write(bw2_dict)
+        bw2data.Database('exiobase').write(bw2_dict)
         print('Created exiobase database')
 
     def import_hybrid_ecoinvent_into_brightway2(self, created_database_name, aggregated):
         print('Starting import of hybrid data')
-        db = Database('hybrid-ecoinvent')
+        db = bw2data.Database('hybrid-ecoinvent')
         ecoinvent_metadata = pd.DataFrame.from_dict(self.PRO_f)
 
         # need to match uuids used in pylcaio to hash codes used by brightway2
@@ -2273,11 +2326,11 @@ class Analysis:
             for IW_category in IW_pylcaio_to_bw2:
                 if 'PDF' in IW_category or 'DALY' in IW_category:
                     IW_pylcaio_to_bw2[IW_category] = \
-                    methods.get(('IMPACTWorld+ (Default_Recommended_Damage 1.46)', IW_category.split(' (')[0]))[
+                    bw2data.methods.get(('IMPACTWorld+ (Default_Recommended_Damage 1.46)', IW_category[0].split(' (')[0]))[
                         'abbreviation']
                 else:
                     IW_pylcaio_to_bw2[IW_category] = \
-                    methods.get(('IMPACTWorld+ (Default_Recommended_Midpoint 1.28)', IW_category.split(' (')[0]))[
+                    bw2data.methods.get(('IMPACTWorld+ (Default_Recommended_Midpoint 1.28)', IW_category[0].split(' (')[0]))[
                         'abbreviation']
             aggregated_results.index = list(IW_pylcaio_to_bw2.values())
 
@@ -2325,7 +2378,7 @@ class Analysis:
             print('Deleting hybrid-ecoinvent database')
             del databases['hybrid-ecoinvent']
             print('Writing {} database'.format(created_database_name))
-            Database(created_database_name).write(bw2_hybrid_dict)
+            bw2data.Database(created_database_name).write(bw2_hybrid_dict)
             print('{} successfully imported'.format(created_database_name))
 
         else:
@@ -2361,7 +2414,7 @@ class Analysis:
                      bw2_dict[(created_database_name, hash_code)]['exchanges'].items()}.values())
             print('Matching ecoinvent data with hybrid data')
             # to link ecoinvent exchanges to exiobase exchanges, we need the original ecoinvent to also be in a dict format
-            bw2_eco_dict = Database('hybrid-ecoinvent').load()
+            bw2_eco_dict = bw2data.Database('hybrid-ecoinvent').load()
 
             # add IO complements to each ecoinvent process
             for process in bw2_eco_dict.keys():
@@ -2390,7 +2443,7 @@ class Analysis:
             del databases['hybrid-ecoinvent']
             print('Writing {} database'.format(created_database_name))
             # write the formatted dictionary in the brightway2 database
-            Database(created_database_name).write(bw2_hybrid_dict)
+            bw2data.Database(created_database_name).write(bw2_hybrid_dict)
             print('{} successfully imported'.format(created_database_name))
 
     def aggregate_hybrid_ecoinvent(self):
